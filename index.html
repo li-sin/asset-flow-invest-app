@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <!-- maximum-scale=1：擋 iOS 點輸入框（font-size<16px）的自動放大；iOS 10+ 手動雙指縮放不受影響 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#1C1C1E">
+  <title>AssetFlow Invest</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
+  <link rel="manifest" href="./manifest.json">
+  <link id="main-css" rel="stylesheet" href="./styles.css">
+  <link rel="preconnect" href="https://accounts.google.com" crossorigin>
+  <script src="https://accounts.google.com/gsi/client" async></script>
+</head>
+<body>
+  <div id="app-shell" class="app-shell is-locked">
+    <section id="auth-gate" class="auth-gate" aria-label="Google 登入">
+      <div class="auth-card">
+        <p class="auth-eyebrow">Private access</p>
+        <h2>使用 Google 帳號登入</h2>
+        <p id="auth-status">請使用授權的 Google 帳號登入。</p>
+        <p id="auth-email" class="auth-email"></p>
+        <p id="auth-version" class="auth-version"></p>
+        <div class="auth-actions">
+          <button id="auth-sign-in" class="button primary" type="button">使用 Google 登入</button>
+        </div>
+      </div>
+    </section>
+    <header class="topbar">
+      <div>
+        <h1>AssetFlow Invest</h1>
+        <p id="summary-line">登入後自動載入雲端庫存</p>
+      </div>
+      <div class="topbar-actions">
+        <button class="button secondary topbar-quick" data-quick="paste" type="button">貼上</button>
+        <button class="button secondary topbar-quick" data-quick="broker" type="button">券商檔</button>
+        <button class="button primary topbar-quick" data-quick="refill" type="button">回填</button>
+        <details class="topbar-more">
+          <summary class="button secondary" aria-label="更多" title="更多">⋯</summary>
+          <div class="topbar-more-menu">
+            <button id="save-merged-snapshot" class="button primary" type="button">合併存雲端</button>
+            <button id="export-backup" class="button secondary" type="button">匯出備份</button>
+            <label class="button secondary file-button">
+              匯入備份
+              <input id="backup-input" type="file" accept="application/json">
+            </label>
+          </div>
+        </details>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="library-panel" aria-label="投資儀表板">
+        <div id="cloud-snapshot" class="cloud-snapshot" aria-live="polite"></div>
+      </section>
+
+      <section id="capture-panel" class="capture-panel" aria-label="新增快照" hidden>
+        <button id="close-capture" class="icon-button" type="button" aria-label="關閉新增快照">×</button>
+        <div class="section-heading compact">
+          <div>
+            <p class="section-eyebrow">Capture</p>
+            <h2>新增快照</h2>
+          </div>
+        </div>
+        <div class="notice">
+          這裡主要用來保存方舟庫存截圖。確認後可合併存到 Google Sheet，儀表板會讀取最新雲端庫存。
+        </div>
+        <div id="drop-zone" class="drop-zone" tabindex="0">
+          <div class="drop-mark">+</div>
+          <div>
+            <h2>貼上或拖放截圖</h2>
+            <p>支援 PNG、JPG、WebP</p>
+          </div>
+          <input id="file-input" type="file" accept="image/*" multiple>
+        </div>
+        <div id="draft-preview" class="draft-preview"></div>
+
+        <form id="entry-form" class="entry-form">
+          <div class="field-grid">
+            <label>
+              日期
+              <input id="entry-date" name="date" type="date">
+            </label>
+            <label>
+              市場
+              <select id="entry-market" name="market">
+                <option value="TW">台股</option>
+                <option value="US">美股</option>
+                <option value="ALL">全部</option>
+              </select>
+            </label>
+            <label>
+              類型
+              <select id="entry-kind" name="kind">
+                <option value="ark_position">方舟庫存</option>
+                <option value="ark_level">方舟水位</option>
+                <option value="ark_layout">方舟布局</option>
+                <option value="broker_position">券商庫存</option>
+                <option value="other">其他</option>
+              </select>
+            </label>
+          </div>
+
+          <label>
+            擷取文字 / 手動補資料
+            <textarea id="entry-text" name="text" rows="5" placeholder="貼上方舟畫面中的股票、股數、成本或水位"></textarea>
+          </label>
+          <div id="parse-preview" class="parse-preview"></div>
+
+          <div class="ocr-panel">
+            <div>
+              <strong>截圖解析</strong>
+              <span id="ocr-status">尚未解析</span>
+            </div>
+            <button id="parse-draft" class="button secondary" type="button" disabled>解析截圖</button>
+          </div>
+
+          <label>
+            備註
+            <textarea id="entry-note" name="note" rows="3" placeholder="例如：已更新方舟、待比對成本"></textarea>
+          </label>
+
+          <div class="form-actions">
+            <button id="save-entry" class="button primary" type="submit" disabled>確認並存雲端</button>
+            <button id="clear-draft" class="button ghost" type="button">清除</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span id="app-version"></span>
+    </footer>
+
+    <aside id="detail-panel" class="detail-panel" aria-label="截圖內容">
+      <button id="close-detail" class="icon-button" type="button" aria-label="關閉">×</button>
+      <div id="detail-content"></div>
+    </aside>
+  </div>
+
+  <script type="module" src="./logic-init.js"></script>
+  <script src="./vendor/fflate-0.8.2.min.js"></script>
+  <script defer src="./app.js"></script>
+</body>
+</html>
