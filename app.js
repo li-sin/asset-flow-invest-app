@@ -2,8 +2,8 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.48.0";
-const APP_VERSION_NOTE = "移除硬碼持股清單，改由 Quote Proxy 與 Sheet 歷史動態解析名稱";
+const APP_VERSION = "v0.48.1";
+const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
 const OCR_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
@@ -7094,7 +7094,7 @@ async function saveArkBPRecords() {
   try {
     const date = state.arkBPDate || new Date().toISOString().slice(0, 10);
     const kept = state.arkBPRecords.filter((r) => !(r.date === date && marketForSymbol(r.symbol) === mkt));
-    const newEntries = validRows.map((r) => ({ date, idleCash: cash, symbol: r.symbol, shares: Number(r.shares), cat: r.cat || "ETF" }));
+    const newEntries = validRows.map((r) => ({ date, idleCash: cash, symbol: r.symbol.toUpperCase(), shares: Number(r.shares), cat: r.cat || "ETF" }));
     const allRecords = [...kept, ...newEntries];
     await clearSheetValues(SHEET_NAMES.buyingPower, "A2:E");
     if (allRecords.length) {
@@ -7205,7 +7205,7 @@ function renderArkBPRecordTab(positions) {
     .map((p) => p.symbol)
     .filter((s) => s && !existingSymbols.has(s) && marketForSymbol(s) === mkt);
   for (const sym of [...new Set(inventorySymbols)]) {
-    allRows.push({ symbol: sym, shares: "", cat: lastCatForSymbol.get(sym) || "ETF", isNew: true, _mkt: mkt });
+    allRows.push({ symbol: sym, shares: "", cat: lastCatForSymbol.get(sym) || (mkt === "US" ? "IND" : "ETF"), isNew: true, _mkt: mkt });
     existingSymbols.add(sym);
   }
 
@@ -8724,7 +8724,7 @@ function renderCloudSnapshot() {
   });
   els.cloudSnapshot.querySelector("#ark-bp-save")?.addEventListener("click", () => saveArkBPRecords());
   els.cloudSnapshot.querySelector("#ark-bp-add-blank")?.addEventListener("click", () => {
-    state.arkBPRows.push({ symbol: "", shares: "", cat: "NON", isNew: true, _mkt: state.arkBPMarket || "TW" });
+    state.arkBPRows.push({ symbol: "", shares: "", cat: (state.arkBPMarket || "TW") === "US" ? "IND" : "NON", isNew: true, _mkt: state.arkBPMarket || "TW" });
     renderCloudSnapshot();
     const lastInput = els.cloudSnapshot.querySelector(`.ark-bp-row:last-child .ark-bp-field`);
     if (lastInput) lastInput.focus();
