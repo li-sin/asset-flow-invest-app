@@ -111,10 +111,15 @@ export function arkBPShareChanged(row) {
   return Number(row.shares || 0) !== Number(row.srcShares || 0);
 }
 
+// 點進股數欄位（touched）就算更新，值沒變也算——代表「這支我看過了」
+export function arkBPRowUpdated(row) {
+  return !!row.touched || arkBPShareChanged(row);
+}
+
 // null＝不顯示標記（新列）；stale＝沿用上次的值
 export function arkBPRowStatus(row, todayStr) {
   if (!row.symbol || row.srcShares === undefined) return null;
-  if (arkBPShareChanged(row) || row.updatedOn === todayStr) return { stale: false, label: "✓" };
+  if (arkBPRowUpdated(row) || row.updatedOn === todayStr) return { stale: false, label: "✓" };
   const [, m, d] = String(row.updatedOn || "").split("-");
   return { stale: true, label: m && d ? `上次 ${Number(m)}/${Number(d)}` : "上次" };
 }

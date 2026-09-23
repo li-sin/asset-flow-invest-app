@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.49.0";
+const APP_VERSION = "v0.49.1";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7089,7 +7089,7 @@ async function saveArkBPRecords() {
     const date = state.arkBPDate || today();
     const kept = state.arkBPRecords.filter((r) => !(r.date === date && marketForSymbol(r.symbol) === mkt));
     const newEntries = validRows.map((r) => ({ date, idleCash: cash, symbol: r.symbol.toUpperCase(), shares: Number(r.shares), cat: r.cat || "ETF",
-      updatedOn: arkBPShareChanged(r) || !r.updatedOn ? date : r.updatedOn }));
+      updatedOn: arkBPRowUpdated(r) || !r.updatedOn ? date : r.updatedOn }));
     const allRecords = [...kept, ...newEntries];
     await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
     if (allRecords.length) {
@@ -8732,7 +8732,17 @@ function renderCloudSnapshot() {
         next.select();
       }
     });
-    input.addEventListener("focus", () => { input.select(); });
+    input.addEventListener("focus", () => {
+      input.select();
+      const i = Number(input.dataset.arkBpI);
+      const row = state.arkBPRows[i];
+      if (input.dataset.arkBpField !== "shares" || !row || row.touched) return;
+      row.touched = true;
+      const todayStr = state.arkBPDate || today();
+      input.classList.toggle("is-stale", !!arkBPRowStatus(row, todayStr)?.stale);
+      const old = input.closest(".ark-bp-row")?.querySelector(".ark-bp-status");
+      if (old) old.outerHTML = arkBPStatusHtml(row, todayStr);
+    });
   });
   els.cloudSnapshot.querySelector("#ark-bp-save")?.addEventListener("click", () => saveArkBPRecords());
   els.cloudSnapshot.querySelector("#ark-bp-add-blank")?.addEventListener("click", () => {
