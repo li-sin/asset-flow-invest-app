@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.48.1";
+const APP_VERSION = "v0.48.2";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7219,7 +7219,10 @@ function renderArkBPRecordTab(positions) {
     if (!r.symbol && r._mkt && r._mkt !== mkt) continue;
     visibleIndices.push(i);
   }
-  visibleIndices.sort((a, b) => (catOrder[allRows[a].cat] || 0) - (catOrder[allRows[b].cat] || 0));
+  visibleIndices.sort((a, b) =>
+    (catOrder[allRows[a].cat] || 0) - (catOrder[allRows[b].cat] || 0)
+    || (!allRows[a].symbol) - (!allRows[b].symbol)
+    || String(allRows[a].symbol).localeCompare(String(allRows[b].symbol), undefined, { numeric: true }));
 
   let lastCatGroup = "";
   const rowsHtml = visibleIndices.map((i) => {
@@ -7293,7 +7296,9 @@ function renderArkBPHistoryTab() {
   const cash = group[0]?.idleCash || 0;
   const signals = arkBPClassifySignals(allRecords);
   const catOrder = { ETF: 0, IND: 1, NON: 2 };
-  const sorted = [...group].sort((a, b) => (catOrder[a.cat] ?? 2) - (catOrder[b.cat] ?? 2));
+  const sorted = [...group].sort((a, b) =>
+    (catOrder[a.cat] ?? 2) - (catOrder[b.cat] ?? 2)
+    || String(a.symbol).localeCompare(String(b.symbol), undefined, { numeric: true }));
   const expanded = state.arkBPHistExpanded;
 
   const rowsHtml = sorted.map((r) => {
