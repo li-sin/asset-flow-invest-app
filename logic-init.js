@@ -3,6 +3,7 @@ import {
   classifySymbolMarket, normalizeMarketKey, splitRowsByMarket, unclassifiedSymbolRows,
   toNum,
   stripHeaderRow, computeFirstBuyMerge,
+  arkBPPrefillRows, arkBPShareChanged, arkBPRowStatus,
 } from './logic.js';
 
 window.taipeiNow = taipeiNow;
@@ -14,3 +15,6 @@ window.unclassifiedSymbolRows = unclassifiedSymbolRows;
 window.toNum = toNum;
 window.stripHeaderRow = stripHeaderRow;
 window.computeFirstBuyMerge = computeFirstBuyMerge;
+window.arkBPPrefillRows = arkBPPrefillRows;
+window.arkBPShareChanged = arkBPShareChanged;
+window.arkBPRowStatus = arkBPRowStatus;

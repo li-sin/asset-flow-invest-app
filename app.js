@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.48.2";
+const APP_VERSION = "v0.49.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -44,7 +44,7 @@ const SHEET_HEADERS = {
   firstBuy: ["symbol", "first_buy_date", "market"],
   refillState: ["market", "symbol", "shares", "avg_cost", "updated_at"],
   cashPlan: ["說明", "金額", "預計年月"],
-  buyingPower: ["date", "idle_cash", "symbol", "shares", "cat"],
+  buyingPower: ["date", "idle_cash", "symbol", "shares", "cat", "updated_on"],
 };
 const SYMBOL_NAMES = {};
 
@@ -100,7 +100,7 @@ const state = {
   arkBPSaving: false,
   arkBPIdleCash: "",
   arkBPRows: [],
-  arkBPDate: new Date().toISOString().slice(0, 10),
+  arkBPDate: "",
   selectedSnapshotDate: null,
   editingDateSnapshotId: null,
   captureMode: "ocr",
@@ -3615,7 +3615,7 @@ async function ensureSheetTables() {
   await updateSheetValues(SHEET_NAMES.firstBuy, "A1:C1", [SHEET_HEADERS.firstBuy]);
   await updateSheetValues(SHEET_NAMES.refillState, "A1:E1", [SHEET_HEADERS.refillState]);
   await updateSheetValues(SHEET_NAMES.cashPlan, "A1:C1", [SHEET_HEADERS.cashPlan]);
-  await updateSheetValues(SHEET_NAMES.buyingPower, "A1:E1", [SHEET_HEADERS.buyingPower]);
+  await updateSheetValues(SHEET_NAMES.buyingPower, "A1:F1", [SHEET_HEADERS.buyingPower]);
 }
 
 async function ensureCloudSheetTables() {
@@ -7042,7 +7042,7 @@ async function loadBuyingPowerRecords(silent) {
   state.arkBPLoading = true;
   if (!silent) renderCloudSnapshot();
   try {
-    const rows = await readSheetValues(SHEET_NAMES.buyingPower, "A:E");
+    const rows = await readSheetValues(SHEET_NAMES.buyingPower, "A:F");
     const records = [];
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i];
@@ -7053,6 +7053,7 @@ async function loadBuyingPowerRecords(silent) {
         symbol: String(r[2] || ""),
         shares: Number(r[3]) || 0,
         cat: String(r[4] || "ETF"),
+        updatedOn: String(r[5] || r[0] || ""),
       });
     }
     state.arkBPRecords = records;
@@ -7070,16 +7071,9 @@ function arkBPPrefillFromLast() {
   if (!records.length) return;
   const dates = [...new Set(records.map((r) => r.date))].sort();
   const lastDate = dates[dates.length - 1];
-  const lastRows = records.filter((r) => r.date === lastDate);
-  if (lastRows.length) {
-    state.arkBPIdleCash = String(lastRows[0].idleCash || "");
-    state.arkBPRows = lastRows.map((r) => ({
-      symbol: r.symbol,
-      shares: String(r.shares || ""),
-      cat: r.cat || "ETF",
-      isNew: false,
-    }));
-  }
+  const lastRow = records.find((r) => r.date === lastDate);
+  if (lastRow) state.arkBPIdleCash = String(lastRow.idleCash || "");
+  state.arkBPRows = arkBPPrefillRows(records);
 }
 
 async function saveArkBPRecords() {
@@ -7092,14 +7086,15 @@ async function saveArkBPRecords() {
   state.arkBPSaving = true;
   renderCloudSnapshot();
   try {
-    const date = state.arkBPDate || new Date().toISOString().slice(0, 10);
+    const date = state.arkBPDate || today();
     const kept = state.arkBPRecords.filter((r) => !(r.date === date && marketForSymbol(r.symbol) === mkt));
-    const newEntries = validRows.map((r) => ({ date, idleCash: cash, symbol: r.symbol.toUpperCase(), shares: Number(r.shares), cat: r.cat || "ETF" }));
+    const newEntries = validRows.map((r) => ({ date, idleCash: cash, symbol: r.symbol.toUpperCase(), shares: Number(r.shares), cat: r.cat || "ETF",
+      updatedOn: arkBPShareChanged(r) || !r.updatedOn ? date : r.updatedOn }));
     const allRecords = [...kept, ...newEntries];
-    await clearSheetValues(SHEET_NAMES.buyingPower, "A2:E");
+    await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
     if (allRecords.length) {
-      const sheetRows = allRecords.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF"]);
-      await updateSheetValues(SHEET_NAMES.buyingPower, `A2:E${sheetRows.length + 1}`, sheetRows);
+      const sheetRows = allRecords.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date]);
+      await updateSheetValues(SHEET_NAMES.buyingPower, `A2:F${sheetRows.length + 1}`, sheetRows);
     }
     await loadBuyingPowerRecords();
   } catch (e) {
@@ -7114,10 +7109,10 @@ async function deleteArkBPDate(date) {
   if (!confirm(`確定刪除 ${date} 的所有記錄？`)) return;
   try {
     const remaining = state.arkBPRecords.filter((r) => r.date !== date);
-    await clearSheetValues(SHEET_NAMES.buyingPower, "A2:E");
+    await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
     if (remaining.length) {
-      const sheetRows = remaining.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF"]);
-      await updateSheetValues(SHEET_NAMES.buyingPower, `A2:E${sheetRows.length + 1}`, sheetRows);
+      const sheetRows = remaining.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date]);
+      await updateSheetValues(SHEET_NAMES.buyingPower, `A2:F${sheetRows.length + 1}`, sheetRows);
     }
     await loadBuyingPowerRecords();
   } catch (e) {
@@ -7192,10 +7187,16 @@ function renderArkBuyingPower(positions) {
   `;
 }
 
+function arkBPStatusHtml(r, todayStr) {
+  const st = arkBPRowStatus(r, todayStr);
+  if (!st) return "";
+  return `<span class="ark-bp-status ${st.stale ? "is-stale" : "is-updated"}">${escapeHtml(st.label)}</span>`;
+}
+
 function renderArkBPRecordTab(positions) {
   const mkt = state.arkBPMarket || "TW";
   const allRows = state.arkBPRows;
-  const today = state.arkBPDate || new Date().toISOString().slice(0, 10);
+  const today = state.arkBPDate || window.today();
   const existingSymbols = new Set(allRows.map((r) => r.symbol));
   const lastCatForSymbol = new Map();
   for (const r of state.arkBPRecords) {
@@ -7231,9 +7232,10 @@ function renderArkBPRecordTab(positions) {
     const dotClass = mkt === "US" ? "list-dot-US" : "list-dot-TW";
     const name = SYMBOL_NAMES[r.symbol] || "";
     const symbolHtml = r.symbol
-      ? `<div class="ark-bp-symbol"><span>${escapeHtml(r.symbol)}</span><span class="ark-bp-symbol-name">${escapeHtml(name)}</span></div>`
+      ? `<div class="ark-bp-symbol"><span>${escapeHtml(r.symbol)}</span><span class="ark-bp-symbol-name">${escapeHtml(name)}</span>${arkBPStatusHtml(r, today)}</div>`
       : `<input class="ark-bp-field ark-bp-symbol-input" type="text" data-ark-bp-field="symbol" data-ark-bp-i="${i}" value="" placeholder="標的代號">`;
     const badgeHtml = `<button class="ark-bp-cat-badge ark-bp-cat-${cat.toLowerCase()}" data-ark-bp-cat="${i}" type="button">${catLabel[cat] || cat}</button>`;
+    const status = arkBPRowStatus(r, today);
     let groupHeader = "";
     if (cat !== lastCatGroup) {
       lastCatGroup = cat;
@@ -7243,7 +7245,7 @@ function renderArkBPRecordTab(positions) {
       <div class="ark-bp-row" data-ark-bp-idx="${i}">
         <span class="list-dot ${dotClass}"></span>
         ${symbolHtml}
-        <input class="ark-bp-field" type="number" ${mkt === "US" ? 'inputmode="decimal" step="any"' : 'inputmode="numeric"'} data-ark-bp-field="shares" data-ark-bp-i="${i}" value="${escapeHtml(r.shares)}" placeholder="股數">
+        <input class="ark-bp-field${arkBPRowStatus(r, today)?.stale ? " is-stale" : ""}" type="number" ${mkt === "US" ? 'inputmode="decimal" step="any"' : 'inputmode="numeric"'} data-ark-bp-field="shares" data-ark-bp-i="${i}" value="${escapeHtml(r.shares)}" placeholder="股數">
         ${badgeHtml}
       </div>`;
   }).join("");
@@ -8710,6 +8712,11 @@ function renderCloudSnapshot() {
       const i = Number(input.dataset.arkBpI);
       const field = input.dataset.arkBpField;
       if (state.arkBPRows[i]) state.arkBPRows[i][field] = input.value;
+      if (field !== "shares" || !state.arkBPRows[i]) return;
+      const todayStr = state.arkBPDate || today();
+      input.classList.toggle("is-stale", !!arkBPRowStatus(state.arkBPRows[i], todayStr)?.stale);
+      const old = input.closest(".ark-bp-row")?.querySelector(".ark-bp-status");
+      if (old) old.outerHTML = arkBPStatusHtml(state.arkBPRows[i], todayStr);
     });
   });
   // Enter key navigation: idle → shares0 → tier0 → shares1 → tier1 → ...

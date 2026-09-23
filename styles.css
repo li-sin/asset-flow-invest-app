@@ -3909,6 +3909,16 @@ textarea {
   font-weight: 600;
   overflow: hidden;
 }
+.ark-bp-field.is-stale { color: var(--muted); }
+.ark-bp-status {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--fs-caption);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.ark-bp-status.is-stale { color: var(--muted); }
+.ark-bp-status.is-updated { color: var(--green); font-weight: 600; }
 .ark-bp-symbol-name {
   color: var(--muted);
   font-weight: 400;

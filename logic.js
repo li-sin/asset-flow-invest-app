@@ -87,3 +87,34 @@ export function computeFirstBuyMerge(cloudValues, memory, removals = [], headers
     clearFrom: cloudRowCount > rows.length ? `A${rows.length + 2}:C` : null,
   };
 }
+
+// === 方舟 Buying Power：分市場帶入上次紀錄＋沿用/已更新標記 ===
+
+// 每個市場各取自己最新一天的紀錄帶入（兩市場最後紀錄日可能不同）
+// srcShares＝帶入時的值（用來判斷有沒有改過）、updatedOn＝該支股數真正更新的日期
+export function arkBPPrefillRows(records) {
+  const rows = [];
+  for (const mkt of ["TW", "US"]) {
+    const mRecs = records.filter((r) => r.symbol && (classifySymbolMarket(r.symbol) || "TW") === mkt);
+    if (!mRecs.length) continue;
+    const lastDate = mRecs.reduce((m, r) => (r.date > m ? r.date : m), "");
+    for (const r of mRecs.filter((x) => x.date === lastDate)) {
+      const shares = String(r.shares || "");
+      rows.push({ symbol: r.symbol, shares, cat: r.cat || "ETF", isNew: false, srcShares: shares, updatedOn: r.updatedOn || r.date });
+    }
+  }
+  return rows;
+}
+
+export function arkBPShareChanged(row) {
+  if (row.srcShares === undefined) return true;
+  return Number(row.shares || 0) !== Number(row.srcShares || 0);
+}
+
+// null＝不顯示標記（新列）；stale＝沿用上次的值
+export function arkBPRowStatus(row, todayStr) {
+  if (!row.symbol || row.srcShares === undefined) return null;
+  if (arkBPShareChanged(row) || row.updatedOn === todayStr) return { stale: false, label: "✓" };
+  const [, m, d] = String(row.updatedOn || "").split("-");
+  return { stale: true, label: m && d ? `上次 ${Number(m)}/${Number(d)}` : "上次" };
+}
