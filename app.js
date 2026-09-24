@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.49.1";
+const APP_VERSION = "v0.49.2";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -100,6 +100,7 @@ const state = {
   arkBPSaving: false,
   arkBPIdleCash: "",
   arkBPRows: [],
+  arkBPDismissed: new Set(), // 今日記錄按 − 移除的代號：防庫存自動帶入又補回來（僅本次開 App 有效）
   arkBPDate: "",
   selectedSnapshotDate: null,
   editingDateSnapshotId: null,
@@ -6848,6 +6849,8 @@ function renderArkRefill(marketSummaries, dataDate, marketsWithSnap) {
     }
     if (!allRows.length && !clearedItems.length) { perMarket[market] = { html: "", pending: 0 }; return; }
     const shown = allRows.slice().sort((a, b) => String(a.symbol).localeCompare(String(b.symbol), undefined, { numeric: true }));
+    // 前一份同市場快照沒有的＝新加入（含清倉後買回），方舟要重新輸入代號 → 給「📋 代號」鈕（v0.49.2）
+    const newSymbols = newSymbolsVsPrevSnapshot(state.cloudHistory.snapshots, state.cloudHistory.positions, market, normalizeDateText(dataDate));
     // 待回填數＝股數有變動（或從未回填過）＋清倉待處理數
     // 只有均價超容差的（avgOnly）不計徽章：那是可選回填，不該被當成待辦催（v0.42.1）
     // v0.43.1 起**完全不看本機 phase**：原本第一行是 `if (refill.phase[key] === "done") return false`，
@@ -6918,7 +6921,7 @@ function renderArkRefill(marketSummaries, dataDate, marketsWithSnap) {
       }
       return `
         <div class="ark-refill-item${phase === "done" ? " is-done" : ""}${phase === "mid" ? " is-mid" : ""}${isStatic ? " is-static" : ""}${isAvgOnly ? " is-avgonly" : ""}" data-ark-item="${escapeHtml(key)}">
-          <div class="ark-refill-id"><strong>${sym}</strong> <span class="muted-text">${name}</span> <span class="ark-refill-lastfill">${escapeHtml(arkLastRefillLabel(key))}</span></div>
+          <div class="ark-refill-id"><strong>${sym}</strong>${newSymbols.has(r.symbol) ? ` <button class="ark-copy-symbol" data-ark-copy-symbol="${sym}" type="button" title="新加入的標的：先複製代號到方舟新增">📋 代號</button>` : ""} <span class="muted-text">${name}</span> <span class="ark-refill-lastfill">${escapeHtml(arkLastRefillLabel(key))}</span></div>
           <div class="ark-refill-vals"><span>股數 <b>${formatNumber(r.shares, 4)}</b></span><span>均價 <b>${formatNumber(r.avgCost, 4)}</b></span></div>
           <div class="ark-refill-action">${action}</div>
         </div>`;
@@ -6969,13 +6972,7 @@ function scrollToNextArkRefill() {
     }
   }, 60);
 }
-async function handleArkCopy(btn, segment) {
-  const key = btn.dataset.arkKey;
-  const sharesOnly = state.arkRefill.mode === "shares-only";
-  const order = state.arkRefill.order;
-  const firstField = order === "avgcost-first" ? "avgcost" : "shares";
-  const field = sharesOnly ? "shares" : (segment === "first" ? firstField : (firstField === "shares" ? "avgcost" : "shares"));
-  const value = field === "shares" ? btn.dataset.arkShares : btn.dataset.arkAvg;
+async function arkCopyText(value) {
   try {
     await navigator.clipboard.writeText(String(value));
   } catch (_) {
@@ -6985,6 +6982,15 @@ async function handleArkCopy(btn, segment) {
     try { document.execCommand("copy"); } catch (__) {}
     document.body.removeChild(ta);
   }
+}
+async function handleArkCopy(btn, segment) {
+  const key = btn.dataset.arkKey;
+  const sharesOnly = state.arkRefill.mode === "shares-only";
+  const order = state.arkRefill.order;
+  const firstField = order === "avgcost-first" ? "avgcost" : "shares";
+  const field = sharesOnly ? "shares" : (segment === "first" ? firstField : (firstField === "shares" ? "avgcost" : "shares"));
+  const value = field === "shares" ? btn.dataset.arkShares : btn.dataset.arkAvg;
+  await arkCopyText(value);
   if (!sharesOnly && segment === "first") {
     state.arkRefill.phase[key] = "mid";
     saveArkRefillState();
@@ -7105,10 +7111,11 @@ async function saveArkBPRecords() {
   }
 }
 
-async function deleteArkBPDate(date) {
-  if (!confirm(`確定刪除 ${date} 的所有記錄？`)) return;
+async function deleteArkBPDate(date, symbol = "") {
+  const msg = symbol ? `確定刪除 ${date} 的 ${symbol}？` : `確定刪除 ${date} 的所有記錄？`;
+  if (!confirm(msg)) return;
   try {
-    const remaining = state.arkBPRecords.filter((r) => r.date !== date);
+    const remaining = state.arkBPRecords.filter((r) => r.date !== date || (symbol && r.symbol !== symbol));
     await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
     if (remaining.length) {
       const sheetRows = remaining.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date]);
@@ -7204,7 +7211,7 @@ function renderArkBPRecordTab(positions) {
   }
   const inventorySymbols = (positions || [])
     .map((p) => p.symbol)
-    .filter((s) => s && !existingSymbols.has(s) && marketForSymbol(s) === mkt);
+    .filter((s) => s && !existingSymbols.has(s) && !state.arkBPDismissed.has(s) && marketForSymbol(s) === mkt);
   for (const sym of [...new Set(inventorySymbols)]) {
     allRows.push({ symbol: sym, shares: "", cat: lastCatForSymbol.get(sym) || (mkt === "US" ? "IND" : "ETF"), isNew: true, _mkt: mkt });
     existingSymbols.add(sym);
@@ -7243,6 +7250,7 @@ function renderArkBPRecordTab(positions) {
     }
     return `${groupHeader}
       <div class="ark-bp-row" data-ark-bp-idx="${i}">
+        <button class="ark-bp-remove-btn" data-ark-bp-remove="${i}" type="button" title="移除這一列（按儲存後生效）">−</button>
         <span class="list-dot ${dotClass}"></span>
         ${symbolHtml}
         <input class="ark-bp-field${arkBPRowStatus(r, today)?.stale ? " is-stale" : ""}" type="number" ${mkt === "US" ? 'inputmode="decimal" step="any"' : 'inputmode="numeric"'} data-ark-bp-field="shares" data-ark-bp-i="${i}" value="${escapeHtml(r.shares)}" placeholder="股數">
@@ -7267,7 +7275,7 @@ function renderArkBPRecordTab(positions) {
       </div>
       ${Number(state.arkBPIdleCash) > 0 && Number(state.arkBPIdleCash) < 100000 ? '<div class="ark-bp-cash-hint">閒錢不到 10 萬，請將方舟建議股數換算為 10 萬基準再記錄</div>' : ""}
       <div class="ark-bp-header">
-        <span></span><span>標的</span><span style="text-align:right">股數</span><span>分類</span>
+        <span></span><span></span><span>標的</span><span style="text-align:right">股數</span><span>分類</span>
       </div>
       ${hasVisibleRows ? rowsHtml : '<p class="muted-text" style="padding:8px 0">尚無' + (mkt === "TW" ? "台股" : "美股") + '標的</p>'}
       <div class="ark-bp-save-row">
@@ -7321,6 +7329,7 @@ function renderArkBPHistoryTab() {
     }
     return `
       <div class="ark-bp-hist-row${hlClass}${isExp ? " is-expanded" : ""}" data-ark-bp-hist-sym="${escapeHtml(r.symbol)}">
+        <button class="ark-bp-remove-btn" data-ark-bp-del-sym="${escapeHtml(r.symbol)}" data-ark-bp-del-sym-date="${escapeHtml(curDate)}" type="button" title="刪除這一天的這支">−</button>
         <span class="list-dot ${dotClass}"></span>
         <div class="ark-bp-symbol">${escapeHtml(r.symbol)}</div>
         ${catBadge}
@@ -7340,8 +7349,8 @@ function renderArkBPHistoryTab() {
         <span class="ark-bp-hist-cash">閒錢 ${cash.toLocaleString()}</span>
         <button class="ark-bp-hist-del" data-ark-bp-del-date="${escapeHtml(curDate)}" type="button">刪除</button>
       </div>
-      <div class="ark-bp-header" style="grid-template-columns:24px 1fr 56px 60px auto 24px">
-        <span></span><span>標的</span><span>分類</span><span style="text-align:right">標準化</span><span></span><span></span>
+      <div class="ark-bp-header" style="grid-template-columns:24px 12px 1fr 56px 60px auto 24px">
+        <span></span><span></span><span>標的</span><span>分類</span><span style="text-align:right">標準化</span><span></span><span></span>
       </div>
       ${rowsHtml}
     </section>
@@ -8258,6 +8267,13 @@ function renderCloudSnapshot() {
   els.cloudSnapshot.querySelectorAll("[data-ark-copy]").forEach((btn) => {
     btn.addEventListener("click", () => handleArkCopy(btn, btn.dataset.arkCopy));
   });
+  els.cloudSnapshot.querySelectorAll("[data-ark-copy-symbol]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await arkCopyText(btn.dataset.arkCopySymbol);
+      btn.textContent = "✓ 已複製";
+      btn.classList.add("is-copied");
+    });
+  });
   els.cloudSnapshot.querySelectorAll("[data-ark-redo]").forEach((btn) => {
     btn.addEventListener("click", () => handleArkForceRefill(btn.dataset.arkKey));
   });
@@ -8764,6 +8780,12 @@ function renderCloudSnapshot() {
       }
     });
   });
+  els.cloudSnapshot.querySelectorAll("[data-ark-bp-del-sym]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation(); // 別觸發整列展開
+      deleteArkBPDate(btn.dataset.arkBpDelSymDate, btn.dataset.arkBpDelSym);
+    });
+  });
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-del-date]").forEach((btn) => {
     btn.addEventListener("click", () => deleteArkBPDate(btn.dataset.arkBpDelDate));
   });
@@ -8785,9 +8807,11 @@ function renderCloudSnapshot() {
       renderCloudSnapshot();
     });
   });
-  els.cloudSnapshot.querySelectorAll(".ark-bp-remove-btn").forEach((btn) => {
+  els.cloudSnapshot.querySelectorAll("[data-ark-bp-remove]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.dataset.arkBpRemove);
+      const sym = state.arkBPRows[i]?.symbol;
+      if (sym) state.arkBPDismissed.add(sym);
       state.arkBPRows.splice(i, 1);
       renderCloudSnapshot();
     });

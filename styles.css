@@ -3702,6 +3702,17 @@ textarea {
 .ark-refill-id strong {
   font-variant-numeric: tabular-nums;
 }
+.ark-copy-symbol {
+  background: none;
+  border: 1px solid var(--blue);
+  border-radius: var(--radius-chip);
+  color: var(--blue);
+  font-size: var(--fs-caption);
+  padding: 1px 6px;
+  margin-left: 4px;
+  cursor: pointer;
+}
+.ark-copy-symbol.is-copied { border-color: var(--green); color: var(--green); }
 .ark-refill-vals {
   display: flex;
   gap: 12px;
@@ -3863,7 +3874,7 @@ textarea {
 
 .ark-bp-header {
   display: grid;
-  grid-template-columns: 24px 1fr 72px 56px;
+  grid-template-columns: 24px 12px 1fr 72px 56px;
   gap: 6px;
   padding: 4px 0;
   font-size: var(--fs-caption);
@@ -3873,7 +3884,7 @@ textarea {
 
 .ark-bp-row {
   display: grid;
-  grid-template-columns: 24px 1fr 72px 56px;
+  grid-template-columns: 24px 12px 1fr 72px 56px;
   gap: 6px;
   align-items: center;
   padding: 8px 0;
@@ -4022,7 +4033,7 @@ textarea {
 
 .ark-bp-hist-row {
   display: grid;
-  grid-template-columns: 24px 1fr 56px 60px auto 24px;
+  grid-template-columns: 24px 12px 1fr 56px 60px auto 24px;
   gap: 6px;
   align-items: center;
   padding: 6px 0;
@@ -4057,11 +4068,14 @@ textarea {
 
 .ark-bp-remove-btn {
   background: none;
-  border: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   color: var(--muted);
   font-size: 16px;
   cursor: pointer;
-  padding: 0 2px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   line-height: 1;
 }
 .ark-bp-remove-btn:hover { color: var(--red); }

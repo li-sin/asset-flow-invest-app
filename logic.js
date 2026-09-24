@@ -123,3 +123,22 @@ export function arkBPRowStatus(row, todayStr) {
   const [, m, d] = String(row.updatedOn || "").split("-");
   return { stale: true, label: m && d ? `上次 ${Number(m)}/${Number(d)}` : "上次" };
 }
+
+// === 方舟回填：新加入標的（v0.49.2）===
+// 「新加入」＝該市場在 date 當天（或之前最近）那份快照有持股、但前一份同市場快照沒有（或 0 股）。
+// 刻意不用「從未回填過」判定：清倉後買回很常見，方舟那邊需要重新輸入代號。
+// 沒有前一份快照 → 回空集合（第一份快照全部都是「新」沒有意義，不出按鈕）。
+export function newSymbolsVsPrevSnapshot(snapshots, positions, market, date) {
+  const mk = normalizeMarketKey(market);
+  const snaps = (snapshots || [])
+    .filter((s) => normalizeMarketKey(s.market) === mk && s.date && (!date || s.date <= date))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const cur = snaps[0];
+  const prev = cur && snaps.find((s) => s.date < cur.date);
+  if (!cur || !prev) return new Set();
+  const held = (id) => new Set((positions || [])
+    .filter((p) => p.snapshotId === id && Number(p.shares || 0) > 0)
+    .map((p) => p.symbol));
+  const prevHeld = held(prev.snapshotId);
+  return new Set([...held(cur.snapshotId)].filter((s) => !prevHeld.has(s)));
+}
