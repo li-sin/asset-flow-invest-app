@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.49.3";
+const APP_VERSION = "v0.50.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7367,6 +7367,7 @@ function renderArkBPHistoryTab() {
         <span class="list-dot ${dotClass}"></span>
         <div class="ark-bp-symbol">${escapeHtml(r.symbol)}</div>
         ${catBadge}
+        <span class="shares-val">${formatNumber(r.shares, 4)}${r.idleCash && r.idleCash !== 100000 ? `<small>閒錢 ${formatNumber(r.idleCash / 10000, 1)} 萬</small>` : ""}</span>
         <span class="norm-val">${norm.toFixed ? norm.toFixed(1) : norm}</span>
         ${sigHtml}
         <span class="ark-bp-hist-expand">${isExp ? "▴" : "▾"}</span>
@@ -7383,52 +7384,58 @@ function renderArkBPHistoryTab() {
         <span class="ark-bp-hist-cash">閒錢 ${cash.toLocaleString()}</span>
         <button class="ark-bp-hist-del" data-ark-bp-del-date="${escapeHtml(curDate)}" type="button">刪除</button>
       </div>
-      <div class="ark-bp-header" style="grid-template-columns:24px 12px 1fr 56px 60px auto 24px">
-        <span></span><span></span><span>標的</span><span>分類</span><span style="text-align:right">標準化</span><span></span><span></span>
+      <div class="ark-bp-header" style="grid-template-columns:24px 12px 1fr 56px 64px 60px auto 24px">
+        <span></span><span></span><span>標的</span><span>分類</span><span style="text-align:right">股數</span><span style="text-align:right">標準化</span><span></span><span></span>
       </div>
       ${rowsHtml}
     </section>
   `;
 }
 
+// 標準化股數趨勢（v0.50.0）：縱軸從 0 起＋中位數／訊號 A 門檻（中位數×1.5）虛線，各標的可互相比較；
+// 橫軸照真實日期；點擊點（透明大圓當觸控區）顯示當日股數／閒錢／標準化／相對中位數
 function renderArkBPSymbolTrend(symRecords, curDate) {
   if (symRecords.length < 2) {
     const r = symRecords[0];
     const norm = r ? arkBPNormalize(r.shares, r.idleCash) : 0;
     return `<div class="ark-bp-trend-box"><p class="muted-text">僅 1 筆紀錄（標準化 ${norm.toFixed ? norm.toFixed(1) : norm}）</p></div>`;
   }
-  const points = symRecords.map((r) => ({ date: r.date, norm: arkBPNormalize(r.shares, r.idleCash) }));
-  const W = 280, H = 80, PL = 36, PR = 8, PT = 8, PB = 20;
-  const cW = W - PL - PR, cH = H - PT - PB;
+  const points = symRecords.map((r) => ({ date: r.date, shares: r.shares, cash: r.idleCash, norm: arkBPNormalize(r.shares, r.idleCash) }));
   const vals = points.map((p) => p.norm);
-  const minV = Math.min(...vals), maxV = Math.max(...vals);
-  const range = maxV - minV || 1;
-  const xStep = points.length > 1 ? cW / (points.length - 1) : 0;
-  const polyPoints = points.map((p, i) => {
-    const x = PL + i * xStep;
-    const y = PT + (1 - (p.norm - minV) / range) * cH;
-    return `${x},${y}`;
-  }).join(" ");
+  const sortedVals = [...vals].sort((a, b) => a - b);
+  const med = sortedVals[Math.floor(sortedVals.length / 2)] || 0; // 同 arkBPClassifySignals 的中位數算法
+  const thr = med * 1.5;
+  const maxV = Math.max(...vals, thr) * 1.1 || 1;
+  const W = 280, H = 110, PL = 32, PR = 8, PT = 8, PB = 20;
+  const cW = W - PL - PR, cH = H - PT - PB;
+  const t = points.map((p) => Date.parse(p.date));
+  const t0 = t[0], tSpan = (t[t.length - 1] - t0) || 1;
+  const xAt = (i) => PL + ((t[i] - t0) / tSpan) * cW;
+  const yAt = (v) => PT + (1 - v / maxV) * cH;
+  const polyPoints = points.map((p, i) => `${xAt(i)},${yAt(p.norm)}`).join(" ");
+  const refLine = (v, label, cls) => v > 0
+    ? `<line x1="${PL}" x2="${W - PR}" y1="${yAt(v)}" y2="${yAt(v)}" class="${cls}" />
+       <text x="${PL - 4}" y="${yAt(v) + 3}" text-anchor="end" font-size="8" fill="var(--muted)">${v.toFixed(0)}</text>
+       <text x="${W - PR}" y="${yAt(v) - 2}" text-anchor="end" font-size="7" fill="var(--muted)">${label}</text>`
+    : "";
   const dots = points.map((p, i) => {
-    const x = PL + i * xStep;
-    const y = PT + (1 - (p.norm - minV) / range) * cH;
     const isCur = p.date === curDate;
-    return `<circle cx="${x}" cy="${y}" r="${isCur ? 4 : 2.5}" fill="${isCur ? "var(--accent, var(--blue))" : "var(--muted)"}" />`;
+    const pct = med > 0 ? Math.round((p.norm / med - 1) * 100) : 0;
+    const tip = `${p.date}｜股數 ${formatNumber(p.shares, 4)}｜閒錢 ${Number(p.cash || 0).toLocaleString()}｜標準化 ${p.norm.toFixed(1)}｜中位數 ${pct >= 0 ? "+" : ""}${pct}%`;
+    const fill = p.norm > thr && thr > 0 ? "var(--amber)" : isCur ? "var(--accent, var(--blue))" : "var(--muted)";
+    return `<circle cx="${xAt(i)}" cy="${yAt(p.norm)}" r="${isCur ? 4 : 2.5}" fill="${fill}" />
+      <circle cx="${xAt(i)}" cy="${yAt(p.norm)}" r="9" fill="transparent" data-tooltip="${escapeHtml(tip)}" />`;
   }).join("");
-  const xLabels = points.filter((_, i) => i === 0 || i === points.length - 1 || points[i].date === curDate).map((p, _, arr) => {
-    const i = points.indexOf(p);
-    const x = PL + i * xStep;
-    return `<text x="${x}" y="${H - 2}" text-anchor="middle" font-size="8" fill="var(--muted)">${p.date.slice(5)}</text>`;
-  }).join("");
-  const yLabels = [minV, maxV].map((v) => {
-    const y = PT + (1 - (v - minV) / range) * cH;
-    return `<text x="${PL - 4}" y="${y + 3}" text-anchor="end" font-size="8" fill="var(--muted)">${v.toFixed(0)}</text>`;
-  }).join("");
+  const xIdx = points.map((_, i) => i).filter((i) => i === 0 || i === points.length - 1 || points[i].date === curDate);
+  const xLabels = xIdx.map((i) => `<text x="${xAt(i)}" y="${H - 2}" text-anchor="middle" font-size="8" fill="var(--muted)">${points[i].date.slice(5)}</text>`).join("");
+  const flat = sortedVals[0] === sortedVals[sortedVals.length - 1];
   return `<div class="ark-bp-trend-box"><svg viewBox="0 0 ${W} ${H}" class="ark-bp-trend-svg">
-    ${yLabels}
+    <line x1="${PL}" x2="${W - PR}" y1="${yAt(0)}" y2="${yAt(0)}" class="ark-bp-trend-axis" />
+    <text x="${PL - 4}" y="${yAt(0) + 3}" text-anchor="end" font-size="8" fill="var(--muted)">0</text>
+    ${refLine(med, "中位數", "ark-bp-trend-med")}${refLine(thr, "A 門檻", "ark-bp-trend-thr")}
     <polyline points="${polyPoints}" fill="none" stroke="var(--accent, var(--blue))" stroke-width="1.5" />
     ${dots}${xLabels}
-  </svg></div>`;
+  </svg>${flat ? `<p class="muted-text ark-bp-trend-note">期間內 ${points.length} 筆數值都一樣（${vals[0].toFixed(1)}），不是圖壞了</p>` : `<p class="muted-text ark-bp-trend-note">點圓點看當日數值</p>`}</div>`;
 }
 
 function marketForSymbol(symbol) {
@@ -8468,7 +8475,7 @@ function renderCloudSnapshot() {
       ? (e.target.closest("circle[data-tooltip]") || e.target.closest("polygon[data-tooltip]"))
       : (["circle", "polygon"].includes(e.target.tagName) && e.target.dataset.tooltip ? e.target : null);
     if (!dot?.dataset.tooltip) return;
-    const container = dot.closest(".shares-chart-container") || dot.closest(".level-chart-container");
+    const container = dot.closest(".shares-chart-container") || dot.closest(".level-chart-container") || dot.closest(".ark-bp-trend-box");
     if (!container) return;
     let tip = container.querySelector(".chart-tooltip");
     if (!tip) { tip = document.createElement("div"); tip.className = "chart-tooltip"; container.appendChild(tip); }

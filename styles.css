@@ -4033,7 +4033,7 @@ textarea {
 
 .ark-bp-hist-row {
   display: grid;
-  grid-template-columns: 24px 12px 1fr 56px 60px auto 24px;
+  grid-template-columns: 24px 12px 1fr 56px 64px 60px auto 24px;
   gap: 6px;
   align-items: center;
   padding: 6px 0;
@@ -4051,6 +4051,7 @@ textarea {
   color: var(--muted);
 }
 .ark-bp-trend-box {
+  position: relative; /* chart-tooltip 定位基準 */
   padding: 4px 0 8px 30px;
   border-bottom: 1px solid rgba(58, 58, 60, 0.15);
 }
@@ -4059,6 +4060,12 @@ textarea {
   max-width: 300px;
   height: auto;
 }
+.ark-bp-trend-axis { stroke: var(--line); stroke-width: 0.8; }
+.ark-bp-trend-med { stroke: var(--muted); stroke-width: 0.8; stroke-dasharray: 3 3; }
+.ark-bp-trend-thr { stroke: var(--amber); stroke-width: 0.8; stroke-dasharray: 3 3; opacity: 0.8; }
+.ark-bp-trend-note { font-size: var(--fs-caption); margin: 2px 0 0; }
+.ark-bp-hist-row .shares-val { text-align: right; font-variant-numeric: tabular-nums; }
+.ark-bp-hist-row .shares-val small { display: block; font-size: 10px; color: var(--muted); }
 
 .ark-bp-norm-header {
   font-size: var(--fs-caption);
