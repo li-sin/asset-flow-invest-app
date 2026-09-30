@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.49.2";
+const APP_VERSION = "v0.49.3";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -60,10 +60,10 @@ const state = {
     snapshots: [],
     positions: [],
   },
-  dashboardTab: "home",
+  dashboardTab: loadViewState().dashboardTab || "home",
   arkRefill: loadArkRefillState(),
   arkRefillLast: loadArkRefillLastLocal(), // 上次回填值（記憶體，初始 localStorage、登入後從雲端覆蓋）
-  holdingsSubTab: "detail", // 庫存 tab 子分頁：detail/refill/delete
+  holdingsSubTab: loadViewState().holdingsSubTab || "detail", // 庫存 tab 子分頁：detail/refill/delete
   homeSubTab: "overview", // 首頁子分頁：overview/alerts/analysis/monthly
   monthlyPerf: [],      // 各月績效（登入後從「投資績效紀錄」tab 讀）
   monthlyExpense: {},   // { "YYYY-MM": { total, sinShare, count } }（跨 Sheet 讀 BudgetAssistant）
@@ -6661,14 +6661,21 @@ function renderBatchFirstBuyPanel(market, rows) {
   `;
 }
 
+// 目前分頁存 sessionStorage：iOS Chrome 切出去再回來會整頁重載，靠它回到原分頁（新開 App 仍從首頁開始）
+function loadViewState() {
+  try { return JSON.parse(sessionStorage.getItem("afi_view_v1") || "{}") || {}; } catch (_) { return {}; }
+}
+function saveViewState() {
+  try { sessionStorage.setItem("afi_view_v1", JSON.stringify({ dashboardTab: state.dashboardTab, holdingsSubTab: state.holdingsSubTab })); } catch (_) {}
+}
 // ===== 方舟回填助手（v0.30.0）：把目前持倉的股數/均價兩段式複製回方舟 App =====
 function loadArkRefillState() {
   try {
     const s = JSON.parse(localStorage.getItem("afi_ark_refill_state_v1") || "{}");
     return {
       phase: s && typeof s.phase === "object" && s.phase ? s.phase : {},
-      order: "shares-first",
-      mode: "both",
+      order: s && s.order === "avgcost-first" ? "avgcost-first" : "shares-first",
+      mode: s && s.mode === "shares-only" ? "shares-only" : "both",
       showAll: !!(s && s.showAll),
       market: s && s.market === "US" ? "US" : "TW",
     };
@@ -6699,12 +6706,34 @@ async function loadRefillStateFromSheet() {
       if (!market || !symbol) continue;
       map[arkRefillKey(market, symbol)] = { shares: Number(row[2]), avgCost: Number(row[3]), ts: row[4] || "" };
     }
+    // 還在待寫清單＝上次寫雲端沒送達（iOS Chrome 切去方舟時分頁被凍結/重載，fire-and-forget 的寫入會斷）
+    // → 保留本機值並補寫，否則雲端舊值會蓋掉、剛回填的那支又跳回 ①（v0.49.3）
+    // 只補待寫清單內的：本機「比雲端新」不能當判準，另一台按「↻ 重填」清掉的列會被這台舊值寫回來
+    const local = loadArkRefillLastLocal();
+    Object.keys(loadRefillPendingKeys()).forEach((key) => {
+      const l = local[key];
+      if (!l) return;
+      map[key] = l;
+      const parts = String(key).split("_");
+      writeRefillEntryToSheet(parts[0], parts.slice(1).join("_"), Number(l.shares) || 0, Number(l.avgCost) || 0).catch(() => {});
+    });
     state.arkRefillLast = map;
     try { localStorage.setItem("afi_ark_refill_last_v1", JSON.stringify(map)); } catch (_) {}
   } catch (_) { /* 失敗保留現有 localStorage 值 */ }
 }
+// 待寫雲端清單（localStorage）：寫入前記下、成功才移除 → 分頁被中斷的寫入下次載入時補寫
+function loadRefillPendingKeys() {
+  try { return JSON.parse(localStorage.getItem("afi_ark_refill_pending_v1") || "{}") || {}; } catch (_) { return {}; }
+}
+function setRefillPending(key, on) {
+  const m = loadRefillPendingKeys();
+  if (on) m[key] = 1; else delete m[key];
+  try { localStorage.setItem("afi_ark_refill_pending_v1", JSON.stringify(m)); } catch (_) {}
+}
 // 完成一支回填 → upsert 寫雲端（依 market+symbol 找列更新，否則 append）
 async function writeRefillEntryToSheet(market, symbol, shares, avgCost) {
+  const pendingKey = arkRefillKey(market, symbol);
+  setRefillPending(pendingKey, true);
   if (!googleAccessToken || !state.auth.authorized) return;
   try {
     await ensureCloudSheetTables();
@@ -6725,10 +6754,12 @@ async function writeRefillEntryToSheet(market, symbol, shares, avgCost) {
         body: JSON.stringify({ majorDimension: "ROWS", values: [rowVals] }),
       });
     }
+    setRefillPending(pendingKey, false);
   } catch (err) { console.warn("writeRefillEntryToSheet", err); }
 }
 // 清掉雲端 refillState 的該列（整列留空；loadRefillStateFromSheet 會略過沒有 market/symbol 的列）
 async function clearRefillEntryFromSheet(market, symbol) {
+  setRefillPending(arkRefillKey(market, symbol), false);
   if (!googleAccessToken || !state.auth.authorized) return;
   try {
     const mkt = normalizeMarketKey(market);
@@ -6990,7 +7021,9 @@ async function handleArkCopy(btn, segment) {
   const firstField = order === "avgcost-first" ? "avgcost" : "shares";
   const field = sharesOnly ? "shares" : (segment === "first" ? firstField : (firstField === "shares" ? "avgcost" : "shares"));
   const value = field === "shares" ? btn.dataset.arkShares : btn.dataset.arkAvg;
-  await arkCopyText(value);
+  // 進度要在 await 之前存：iOS Chrome 一切去方舟分頁就被凍結、回來整頁重載，
+  // await 之後的程式常常跑不到 → ① 的 mid／② 的 done 都沒存到（v0.49.3）
+  const copying = arkCopyText(value);
   if (!sharesOnly && segment === "first") {
     state.arkRefill.phase[key] = "mid";
     saveArkRefillState();
@@ -7009,6 +7042,7 @@ async function handleArkCopy(btn, segment) {
     const parts = String(key).split("_");
     writeRefillEntryToSheet(parts[0], parts.slice(1).join("_"), shares, avgCost).catch(() => {});
   }
+  await copying;
 }
 // 清倉完成：已在方舟按 − → 記 0 股（原值留在 prev* 供同裝置當日重做），隔天起整列消失
 function handleArkClearedDone(key) {
@@ -7404,6 +7438,7 @@ function marketForSymbol(symbol) {
 
 function renderCloudSnapshot() {
   if (!els.cloudSnapshot) return;
+  saveViewState();
   const cloud = state.cloudSnapshot;
   if (!cloud?.snapshot) {
     if (state.cloudLoading) {
