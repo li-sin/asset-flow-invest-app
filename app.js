@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.6";
+const APP_VERSION = "v0.52.7";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7303,19 +7303,34 @@ const ARK_BT_STRATEGIES = [
 
 async function fetchArkBacktestCloses(mkt) {
   if (state.arkBTCloses[mkt] !== "idle" || !googleAccessToken) return;
+  // 首頁歷史收盤還在抓 → 等它抓完再算缺哪些，避免重複抓（v0.52.7）
+  if (state.historicalCloseLoading) { setTimeout(() => fetchArkBacktestCloses(mkt), 800); return; }
   const recs = state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === mkt);
   const dates = recs.map((r) => r.date).sort();
   if (!dates.length) { state.arkBTCloses[mkt] = "done"; return; }
   state.arkBTCloses[mkt] = "loading";
   const held = (state.cloudHistory.positions || []).filter((p) => marketForSymbol(p.symbol) === mkt).map((p) => p.symbol);
-  const symbols = [...new Set([...recs.map((r) => r.symbol), ...held, ...(mkt === "US" ? ["USDTWD=X"] : [])])].map(formatYahooSymbol).filter(Boolean);
-  try {
-    for (let i = 0; i < symbols.length; i += 20) {
-      const params = new URLSearchParams({ mode: "history", symbols: symbols.slice(i, i + 20).join(","), start: dates[0], end: today(), interval: "1d" });
+  const all = [...new Set([...recs.map((r) => r.symbol), ...held, ...(mkt === "US" ? ["USDTWD=X"] : [])])];
+  // C：已有的就不抓——收盤從起點附近（起點後 4 天內，容許遇到週末／休市）一路到最近 5 天內
+  const startDate = dates[0];
+  const dayShift = (d, n) => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
+  const recentCut = dayShift(today(), -5);
+  const startCut = dayShift(startDate, 4);
+  const covered = (sym) => {
+    const ds = Object.keys(state.historicalCloses[normalizeQuoteSymbol(sym)] || {}).sort();
+    return ds.length > 0 && ds[0] <= startCut && ds[ds.length - 1] >= recentCut;
+  };
+  const symbols = all.filter((sym) => !covered(sym)).map(formatYahooSymbol).filter(Boolean);
+  // A：各批同時送出，等待時間≈最慢的一批
+  const batches = [];
+  for (let i = 0; i < symbols.length; i += 20) batches.push(symbols.slice(i, i + 20));
+  await Promise.all(batches.map(async (batch) => {
+    try {
+      const params = new URLSearchParams({ mode: "history", symbols: batch.join(","), start: startDate, end: today(), interval: "1d" });
       const res = await fetch(`${QUOTE_PROXY_URL}?${params.toString()}`);
       mergeHistoricalCloses(normalizeHistoricalClosePayload(await res.json()));
-    }
-  } catch (e) { console.warn("fetchArkBacktestCloses", e); }
+    } catch (e) { console.warn("fetchArkBacktestCloses", e); }
+  }));
   state.arkBTCloses[mkt] = "done";
   if (state.dashboardTab === "ark") renderCloudSnapshot();
 }
