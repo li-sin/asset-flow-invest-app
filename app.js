@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.4";
+const APP_VERSION = "v0.52.5";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7178,6 +7178,9 @@ async function saveArkBPRecords() {
   const mkt = state.arkBPMarket || "TW";
   const validRows = state.arkBPRows.filter((r) => r.symbol && marketForSymbol(r.symbol) === mkt);
   if (!validRows.length) { alert("至少要有一筆" + (mkt === "TW" ? "台股" : "美股") + "股票資料"); return; }
+  // 同代號出現兩次會存成重複紀錄（9/23 MPC 案例）→ 擋下（v0.52.5）
+  const dupSyms = [...new Set(validRows.map((r) => r.symbol.toUpperCase()).filter((sym, i, a) => a.indexOf(sym) !== i))];
+  if (dupSyms.length) { alert(`代號重複：${dupSyms.join("、")}，請刪掉多的那列再儲存`); return; }
   // 價值區應為 10 檔（台股只布局 ETF 價值區）：超過就請 Sin 確認，避免回測多買（v0.52.0）
   const etfCount = mkt === "TW" ? validRows.filter((r) => (r.cat || "ETF") === "ETF").length : 0;
   if (etfCount > 10 && !confirm(`ETF 價值區有 ${etfCount} 檔（超過 10 檔），確定要這樣儲存？`)) return;
@@ -7218,11 +7221,15 @@ async function saveArkRankRecords(date) {
   await writeArkRankRecords([...kept, ...add]);
 }
 
-async function deleteArkBPDate(date, symbol = "") {
-  const msg = symbol ? `確定刪除 ${date} 的 ${symbol}？` : `確定刪除 ${date} 的所有記錄？`;
+// idx 有值＝只刪那一筆（同日同代號重複時用，v0.52.5）
+async function deleteArkBPDate(date, symbol = "", idx = "") {
+  const msg = symbol ? `確定刪除 ${date} 的 ${symbol}${idx !== "" ? "（這一筆）" : ""}？` : `確定刪除 ${date} 的所有記錄？`;
   if (!confirm(msg)) return;
   try {
-    const remaining = state.arkBPRecords.filter((r) => r.date !== date || (symbol && r.symbol !== symbol));
+    const target = idx !== "" && idx !== undefined ? state.arkBPRecords[Number(idx)] : null;
+    const remaining = target
+      ? state.arkBPRecords.filter((r) => r !== target)
+      : state.arkBPRecords.filter((r) => r.date !== date || (symbol && r.symbol !== symbol));
     await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
     if (remaining.length) {
       const sheetRows = remaining.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date]);
@@ -7624,6 +7631,10 @@ function renderArkBPHistoryTab() {
   const notLaidOut = (r) => usSnapToday && r.cat === "IND" && !laidOut.has(String(r.symbol).toUpperCase());
   // 反向：有布局卻標非價值區 → 多半是標籤設錯
   const laidButNon = (r) => usSnapToday && r.cat === "NON" && laidOut.has(String(r.symbol).toUpperCase());
+  // 同日同代號重複記錄（v0.52.5）：按鈕改用紀錄 index 定位，不然永遠改到／刪到第一筆
+  const symCount = new Map();
+  group.forEach((r) => symCount.set(r.symbol, (symCount.get(r.symbol) || 0) + 1));
+  const dupCount = [...symCount.values()].filter((n) => n > 1).length;
   const catOrder = { ETF: 0, IND: 1, NON: 2 };
   const sorted = [...group].sort((a, b) =>
     (catOrder[a.cat] ?? 2) - (catOrder[b.cat] ?? 2)
@@ -7640,7 +7651,8 @@ function renderArkBPHistoryTab() {
     const sigHtml = sig ? `<span class="ark-bp-signal ark-bp-signal-${sig.toLowerCase()}">${sig}</span>` : "";
     const catLbl = { ETF: "ETF", IND: "產業", NON: "非" };
     // 點標籤改分類（先改記憶體，按「儲存分類變更」才寫 Sheet；v0.52.3）
-    const catBadge = `<button type="button" class="ark-bp-cat-badge ark-bp-cat-${(r.cat || "ETF").toLowerCase()}" data-ark-bp-hist-cat="${escapeHtml(r.date)}|${escapeHtml(r.symbol)}">${catLbl[r.cat] || "ETF"}</button>`;
+    const recIdx = allRecords.indexOf(r);
+    const catBadge = `<button type="button" class="ark-bp-cat-badge ark-bp-cat-${(r.cat || "ETF").toLowerCase()}" data-ark-bp-hist-cat="${recIdx}">${catLbl[r.cat] || "ETF"}</button>`;
     const isExp = expanded === r.symbol;
     let trendHtml = "";
     if (isExp) {
@@ -7649,9 +7661,9 @@ function renderArkBPHistoryTab() {
     }
     return `
       <div class="ark-bp-hist-row${hlClass}${isExp ? " is-expanded" : ""}" data-ark-bp-hist-sym="${escapeHtml(r.symbol)}">
-        <button class="ark-bp-remove-btn" data-ark-bp-del-sym="${escapeHtml(r.symbol)}" data-ark-bp-del-sym-date="${escapeHtml(curDate)}" type="button" title="刪除這一天的這支">−</button>
+        <button class="ark-bp-remove-btn" data-ark-bp-del-sym="${escapeHtml(r.symbol)}" data-ark-bp-del-sym-date="${escapeHtml(curDate)}" data-ark-bp-del-idx="${recIdx}" type="button" title="刪除這一筆">−</button>
         <span class="list-dot ${dotClass}"></span>
-        <div class="ark-bp-symbol">${escapeHtml(r.symbol)}${notLaidOut(r) ? `<small class="ark-bp-warn">⚠️ 價值區未布局</small>` : ""}${laidButNon(r) ? `<small class="ark-bp-warn">⚠️ 有布局但標非價值區</small>` : ""}</div>
+        <div class="ark-bp-symbol">${escapeHtml(r.symbol)}${notLaidOut(r) ? `<small class="ark-bp-warn">⚠️ 價值區未布局</small>` : ""}${laidButNon(r) ? `<small class="ark-bp-warn">⚠️ 有布局但標非價值區</small>` : ""}${symCount.get(r.symbol) > 1 ? `<small class="ark-bp-warn">⚠️ 重複記錄</small>` : ""}</div>
         ${catBadge}
         <span class="shares-val">${formatNumber(r.shares, 4)}</span>
         <span class="norm-val">${formatArkNorm(norm)}</span>
@@ -7670,6 +7682,7 @@ function renderArkBPHistoryTab() {
         <span class="ark-bp-hist-cash">閒錢 ${cash.toLocaleString()}</span>
         <button class="ark-bp-hist-del" data-ark-bp-del-date="${escapeHtml(curDate)}" type="button">刪除</button>
       </div>
+      ${dupCount ? `<p class="ark-bp-warn-note">⚠️ ${dupCount} 支同一天記了兩次以上：按其中一筆的 − 刪掉多的那筆</p>` : ""}
       ${mkt === "US" ? (usSnapToday
         ? [group.filter(notLaidOut).length ? `<p class="ark-bp-warn-note">⚠️ ${group.filter(notLaidOut).length} 支標成價值區但當天沒布局：標籤設錯或布局錯檔？</p>` : "",
            group.filter(laidButNon).length ? `<p class="ark-bp-warn-note">⚠️ ${group.filter(laidButNon).length} 支當天有布局但標非價值區：標籤設錯？</p>` : ""].join("")
@@ -9093,6 +9106,28 @@ function renderCloudSnapshot() {
       if (old) old.outerHTML = arkBPStatusHtml(state.arkBPRows[i], todayStr);
     });
   });
+  // 防呆：代號打完（change＝離開欄位）若與其他列重複 → 不留第二列；有填股數就更新原本那列並提醒（v0.52.5）
+  els.cloudSnapshot.querySelectorAll('[data-ark-bp-field="symbol"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      const i = Number(input.dataset.arkBpI);
+      const row = state.arkBPRows[i];
+      const sym = String(input.value || "").toUpperCase().trim();
+      if (!row || !sym) return;
+      const mkt = marketForSymbol(sym);
+      const j = state.arkBPRows.findIndex((r, k) => k !== i && String(r.symbol || "").toUpperCase().trim() === sym && marketForSymbol(r.symbol) === mkt);
+      if (j < 0) return;
+      const hasShares = String(row.shares ?? "").trim() !== "";
+      if (hasShares) { state.arkBPRows[j].shares = row.shares; state.arkBPRows[j].touched = true; }
+      state.arkBPRows.splice(i, 1);
+      const keep = j > i ? j - 1 : j;
+      alert(hasShares
+        ? `${sym} 已在列表中，已把股數 ${row.shares} 更新到原本那列（不另外新增）`
+        : `${sym} 已在列表中，請直接改原本那列的股數`);
+      renderCloudSnapshot();
+      const target = els.cloudSnapshot.querySelector(`[data-ark-bp-i="${keep}"][data-ark-bp-field="shares"]`);
+      if (target) { target.focus(); target.select?.(); }
+    });
+  });
   // Enter key navigation: idle → shares0 → tier0 → shares1 → tier1 → ...
   els.cloudSnapshot.querySelectorAll(".ark-bp-field, .ark-bp-idle-input").forEach((input) => {
     input.addEventListener("keydown", (e) => {
@@ -9143,7 +9178,7 @@ function renderCloudSnapshot() {
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-del-sym]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation(); // 別觸發整列展開
-      deleteArkBPDate(btn.dataset.arkBpDelSymDate, btn.dataset.arkBpDelSym);
+      deleteArkBPDate(btn.dataset.arkBpDelSymDate, btn.dataset.arkBpDelSym, btn.dataset.arkBpDelIdx);
     });
   });
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-del-date]").forEach((btn) => {
@@ -9163,10 +9198,9 @@ function renderCloudSnapshot() {
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-hist-cat]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation(); // 不觸發整列展開趨勢圖
-      const [date, sym] = btn.dataset.arkBpHistCat.split("|");
-      const rec = state.arkBPRecords.find((r) => r.date === date && r.symbol === sym);
+      const rec = state.arkBPRecords[Number(btn.dataset.arkBpHistCat)];
       if (!rec) return;
-      const isUS = marketForSymbol(sym) === "US";
+      const isUS = marketForSymbol(rec.symbol) === "US";
       const next = isUS ? { ETF: "IND", IND: "NON", NON: "IND" } : { ETF: "IND", IND: "NON", NON: "ETF" };
       rec.cat = next[rec.cat || "ETF"] || (isUS ? "IND" : "ETF");
       state.arkBPHistCatDirty = true;
