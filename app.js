@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.8";
+const APP_VERSION = "v0.52.9";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -5882,7 +5882,11 @@ function renderTimedSvg(series, dates, W = 600, H = 140, opts = {}) {
   const _yNorm = _rawYStep / _yMag;
   const yStep = (_yNorm < 1.5 ? 1 : _yNorm < 3.5 ? 2 : _yNorm < 7.5 ? 5 : 10) * _yMag;
   const yLines = [];
-  for (let v = Math.floor(minV / yStep) * yStep; v <= maxV + yStep; v += yStep) {
+  // 格線值用「起點＋k×間距」算再依間距位數捨入：累加會冒出 -0.01999999997、6.9e-18 這種浮點誤差（v0.52.9）
+  const yDec = Math.max(0, -Math.floor(Math.log10(yStep)));
+  const yStart = Math.floor(minV / yStep);
+  for (let k = yStart; k * yStep <= maxV + yStep; k++) {
+    const v = Number((k * yStep).toFixed(yDec)) || 0;
     const y = yPos(v); if (y < PT - 2 || y > H - PB + 2) continue;
     yLines.push(`<line x1="${PL}" y1="${y}" x2="${W - PR}" y2="${y}" stroke="var(--line)" stroke-width="0.4"/>`);
     const lbl = Math.abs(v) >= 10000 ? `${Math.round(v / 1000)}k` : v;
