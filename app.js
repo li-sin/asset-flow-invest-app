@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.3";
+const APP_VERSION = "v0.52.4";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7615,6 +7615,15 @@ function renderArkBPHistoryTab() {
   const group = records.filter((r) => r.date === curDate);
   const cash = group[0]?.idleCash || 0;
   const signals = arkBPClassifySignals(allRecords);
+  // 美股：價值區（產業）卻沒布局 → 標籤設錯或布局錯檔（v0.52.4）
+  // 比對同日美股快照的每日布局（快照日期＝方舟紀錄日，晚上下單、隔天貼快照時日期填前一天）
+  const usSnapToday = mkt === "US" && (state.cloudHistory.snapshots || []).some((sn) => normalizeMarketKey(sn.market) === "US" && sn.date === curDate);
+  const laidOut = new Set((state.cloudHistory.layout || [])
+    .filter((l) => normalizeMarketKey(l.market) === "US" && l.date === curDate && Number(l.delta) > 0)
+    .map((l) => String(l.symbol).toUpperCase()));
+  const notLaidOut = (r) => usSnapToday && r.cat === "IND" && !laidOut.has(String(r.symbol).toUpperCase());
+  // 反向：有布局卻標非價值區 → 多半是標籤設錯
+  const laidButNon = (r) => usSnapToday && r.cat === "NON" && laidOut.has(String(r.symbol).toUpperCase());
   const catOrder = { ETF: 0, IND: 1, NON: 2 };
   const sorted = [...group].sort((a, b) =>
     (catOrder[a.cat] ?? 2) - (catOrder[b.cat] ?? 2)
@@ -7642,9 +7651,9 @@ function renderArkBPHistoryTab() {
       <div class="ark-bp-hist-row${hlClass}${isExp ? " is-expanded" : ""}" data-ark-bp-hist-sym="${escapeHtml(r.symbol)}">
         <button class="ark-bp-remove-btn" data-ark-bp-del-sym="${escapeHtml(r.symbol)}" data-ark-bp-del-sym-date="${escapeHtml(curDate)}" type="button" title="刪除這一天的這支">−</button>
         <span class="list-dot ${dotClass}"></span>
-        <div class="ark-bp-symbol">${escapeHtml(r.symbol)}</div>
+        <div class="ark-bp-symbol">${escapeHtml(r.symbol)}${notLaidOut(r) ? `<small class="ark-bp-warn">⚠️ 價值區未布局</small>` : ""}${laidButNon(r) ? `<small class="ark-bp-warn">⚠️ 有布局但標非價值區</small>` : ""}</div>
         ${catBadge}
-        <span class="shares-val">${formatNumber(r.shares, 4)}${r.idleCash && r.idleCash !== 100000 ? `<small>閒錢 ${formatNumber(r.idleCash / 10000, 1)} 萬</small>` : ""}</span>
+        <span class="shares-val">${formatNumber(r.shares, 4)}</span>
         <span class="norm-val">${formatArkNorm(norm)}</span>
         ${sigHtml}
         <span class="ark-bp-hist-expand">${isExp ? "▴" : "▾"}</span>
@@ -7661,6 +7670,10 @@ function renderArkBPHistoryTab() {
         <span class="ark-bp-hist-cash">閒錢 ${cash.toLocaleString()}</span>
         <button class="ark-bp-hist-del" data-ark-bp-del-date="${escapeHtml(curDate)}" type="button">刪除</button>
       </div>
+      ${mkt === "US" ? (usSnapToday
+        ? [group.filter(notLaidOut).length ? `<p class="ark-bp-warn-note">⚠️ ${group.filter(notLaidOut).length} 支標成價值區但當天沒布局：標籤設錯或布局錯檔？</p>` : "",
+           group.filter(laidButNon).length ? `<p class="ark-bp-warn-note">⚠️ ${group.filter(laidButNon).length} 支當天有布局但標非價值區：標籤設錯？</p>` : ""].join("")
+        : `<p class="muted-text ark-bp-warn-note">當天沒有美股快照，無法比對是否布局</p>`) : ""}
       ${state.arkBPHistCatDirty ? `<div class="ark-bp-hist-dirty"><span>分類已修改（尚未儲存）</span><button class="button compact primary" type="button" data-ark-bp-hist-cat-save>儲存分類變更</button><button class="button compact ghost" type="button" data-ark-bp-hist-cat-cancel>取消</button></div>` : ""}
       <div class="ark-bp-header" style="grid-template-columns:24px 12px 1fr 56px 64px 60px auto 24px">
         <span></span><span></span><span>標的</span><span>分類</span><span style="text-align:right">股數</span><span style="text-align:right">標準化</span><span></span><span></span>

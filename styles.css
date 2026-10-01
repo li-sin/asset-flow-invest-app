@@ -4188,3 +4188,5 @@ textarea {
 .ark-bt-table tr.is-soldout td { color: var(--muted); }
 .ark-bp-hist-dirty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; font-size: var(--fs-caption); color: var(--amber); }
 button.ark-bp-cat-badge { border: 0; cursor: pointer; font: inherit; }
+.ark-bp-symbol .ark-bp-warn { display: block; font-size: 10px; color: var(--amber); font-weight: 500; }
+.ark-bp-warn-note { font-size: var(--fs-caption); color: var(--amber); margin: 4px 0; }
