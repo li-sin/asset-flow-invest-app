@@ -163,6 +163,7 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
   let cash = Number(startCapital) || 0;
   const holdings = new Map(); // symbol → { shares, cost, lastPrice }
   const firstDate = days?.[0]?.date;
+  const fixedKind = kind === "oneShare" || kind === "usd100"; // 1 股／100 美元：不看水位，賣出只依位階
   for (const ih of initialHoldings || []) {
     const shares = Number(ih.shares) || 0;
     const p = firstDate ? priceAt(ih.symbol, firstDate) : null;
@@ -187,13 +188,13 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
   };
   for (const day of days || []) {
     const w = Number(day.level) / 100;
-    if (!(w > 0)) { series.push({ date: day.date, value: cash + mvOf(day.date), skipped: "缺水位" }); continue; }
+    if (!(w > 0) && !fixedKind) { series.push({ date: day.date, value: cash + mvOf(day.date), skipped: "缺水位" }); continue; }
     let mv = mvOf(day.date);
     const total = cash + mv;
     let sold = 0, bought = 0;
     const trades = []; // 當天交易明細（回測細節面板用，v0.52.1）
     // 調節：持股超過水位 → 報酬率最低先整筆賣
-    if (mv > w * total + 1e-9) {
+    if (!fixedKind && mv > w * total + 1e-9) {
       const ranked = [...holdings.entries()]
         .map(([sym, h]) => ({ sym, h, p: px(sym, day.date) || 0 }))
         .sort((a, b) => (a.p / (a.h.cost / a.h.shares) - 1) - (b.p / (b.h.cost / b.h.shares) - 1));
@@ -204,6 +205,40 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
       }
     }
     const idle = w * total - mv;
+    if (fixedKind) {
+      // 1 股／100 美元戰法（v0.52.2）：每天價值區各買 1 股／100 美元；每天賣掉持股中位階最高的（整筆），
+      // 錢不夠買就再賣位階第 2 高，依此類推。不看水位。位階只有 Sin 記的最高 2 支 → 不夠時標 rankShort
+      const ranks = (day.ranks || []).filter((sym) => holdings.has(sym));
+      const sellOne = () => {
+        const sym = ranks.shift(); if (!sym) return false;
+        const h = holdings.get(sym); const p = px(sym, day.date) || 0;
+        cash += h.shares * p; holdings.delete(sym); sold++;
+        trades.push({ type: "sell", symbol: sym, qty: h.shares, price: p, ret: p / (h.cost / h.shares) - 1 });
+        return true;
+      };
+      const orders = (day.picks || []).map((pk) => ({ ...pk, p: priceAt(pk.symbol, day.date) })).filter((pk) => pk.p > 0)
+        .map((pk) => ({ ...pk, qty: kind === "oneShare" ? 1 : floorToUnit(100 / pk.p, unit) }))
+        .filter((o) => o.qty > 0);
+      const need = orders.reduce((sm, o) => sm + o.qty * o.p, 0);
+      let rankMissing = !(day.ranks || []).length, rankShort = false;
+      if (!rankMissing) sellOne();
+      while (cash + 1e-9 < need) { if (!sellOne()) { rankShort = true; break; } }
+      for (const o of orders) {
+        const c = o.qty * o.p;
+        if (c > cash + 1e-9) { rankShort = true; continue; }
+        cash -= c; bought++;
+        trades.push({ type: "buy", symbol: o.symbol, qty: o.qty, price: o.p });
+        const h = holdings.get(o.symbol) || { shares: 0, cost: 0, lastPrice: o.p };
+        h.shares += o.qty; h.cost += c; h.lastPrice = o.p;
+        holdings.set(o.symbol, h);
+      }
+      const positions = [...holdings.entries()].map(([symbol, h]) => {
+        const price = px(symbol, day.date) || 0;
+        return { symbol, shares: h.shares, avgCost: h.cost / h.shares, price, value: h.shares * price };
+      }).sort((a, b) => b.value - a.value);
+      series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle, level: Number(day.level), positions, trades, rankMissing, rankShort });
+      continue;
+    }
     if (idle > 0) {
       const picks = (day.picks || []).map((pk) => ({ ...pk, p: priceAt(pk.symbol, day.date) })).filter((pk) => pk.p > 0);
       let orders;

@@ -4182,3 +4182,7 @@ textarea {
 .ark-bt-trade.is-buy { color: var(--red); }
 .ark-bt-trade.is-sell { color: var(--green); }
 .ark-bt-pos { margin-top: 6px; }
+.ark-bt-delta { font-size: 11px; font-weight: 600; margin-left: 2px; }
+.ark-bt-delta.is-buy { color: var(--red); }
+.ark-bt-delta.is-sell { color: var(--green); }
+.ark-bt-table tr.is-soldout td { color: var(--muted); }

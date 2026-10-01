@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.1";
+const APP_VERSION = "v0.52.2";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7288,6 +7288,9 @@ const ARK_BT_STRATEGIES = [
   { key: "yellow", label: "黃色股數", kind: "yellow", color: "var(--chart-1)" },
   { key: "risk100", label: "風控 100%", kind: "risk", riskDiv: 10, color: "var(--chart-2)" },
   { key: "risk50", label: "風控 50%", kind: "risk", riskDiv: 20, color: "var(--chart-3)" },
+  // 只有美股（v0.52.2）：每天價值區各買 1 股／100 美元，賣位階最高（今日記錄「庫存位階最高」）
+  { key: "oneShare", label: "1 股", kind: "oneShare", color: "var(--chart-4)", usOnly: true },
+  { key: "usd100", label: "100 美元", kind: "usd100", color: "var(--chart-5)", usOnly: true },
 ];
 
 async function fetchArkBacktestCloses(mkt) {
@@ -7338,6 +7341,7 @@ function buildArkBacktestInput(mkt) {
       date: d,
       level: targetLevelFromHistory(mkt, d),
       picks: zone.map((r) => ({ symbol: r.symbol, norm: arkBPNormalize(r.shares, r.idleCash) })),
+      ranks: (state.arkRankRecords || []).filter((x) => x.market === mkt && x.date === d).sort((a, b) => a.rank - b.rank).map((x) => x.symbol),
     };
   });
   return { start, days, fxAt };
@@ -7354,7 +7358,7 @@ function renderArkBacktestTab() {
   }
   const priceAt = (s, d) => historicalClose(s, d);
   const unit = mkt === "US" ? 0.01 : 1;
-  const results = ARK_BT_STRATEGIES.map((st) => ({ ...st, r: simulateArkStrategy({ days, priceAt, fxAt, startCapital: start.capital, unit, kind: st.kind, riskDiv: st.riskDiv, initialHoldings: start.holdings }) }));
+  const results = ARK_BT_STRATEGIES.filter((st) => !st.usOnly || mkt === "US").map((st) => ({ ...st, r: simulateArkStrategy({ days, priceAt, fxAt, startCapital: start.capital, unit, kind: st.kind, riskDiv: st.riskDiv, initialHoldings: start.holdings }) }));
   const pct = (v) => (v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`);
   const rows = results.map(({ label, color, r }) => `
     <tr><td><span class="level-legend-dot" style="background:${color}"></span>${label}</td>
@@ -7370,7 +7374,12 @@ function renderArkBacktestTab() {
     `起點 ${start.date}，起始資金 ${cur}${formatNumber(start.capital, 0)}（推算總資產，快照 ${start.snapDate.slice(5)}${mkt === "US" ? `，匯率 ${start.fx.toFixed(2)}` : ""}${start.missing ? `，⚠️ ${start.missing} 支缺收盤價未計入` : ""}）`,
     `各戰法從起點當天的實際持股（${start.holdings.length} 支）開始；共 ${days.length} 個記錄日；只算${mkt === "US" ? "產業" : "ETF"}價值區；以當天收盤價成交`,
     over10.length ? `⚠️ 價值區超過 10 檔的日子：${over10.join("、")}` : "",
-    noLevel ? `⚠️ ${noLevel} 天缺水位，當天不交易` : "",
+    noLevel ? `⚠️ ${noLevel} 天缺水位，水位類戰法當天不交易` : "",
+    mkt === "US" ? (() => {
+      const fx = results.find((x) => x.key === "oneShare")?.r.series || [];
+      const miss = fx.filter((p) => p.rankMissing).length, short = fx.filter((p) => p.rankShort).length;
+      return miss || short ? `⚠️ 1 股／100 美元：${miss} 天沒記位階（當天不賣）${short ? `、${short} 天位階最高 2 支不夠賣（錢不夠就少買）` : ""}` : "";
+    })() : "",
   ].filter(Boolean);
   return `
     <section class="dashboard-card ark-bt-card">
@@ -7382,7 +7391,6 @@ function renderArkBacktestTab() {
       <p class="muted-text ark-bt-unit">曲線＝累積報酬 %，點圖上某一天看各戰法當天的持股與現金</p>
       ${arkBTDetailHtml(results, chartDates, cur, mkt)}
       ${notes.map((n) => `<p class="muted-text ark-bt-note">${escapeHtml(n)}</p>`).join("")}
-      <p class="muted-text ark-bt-note">100 美元／1 股戰法：等「庫存位階最高」累積資料後加入。</p>
     </section>`;
 }
 
@@ -7411,22 +7419,33 @@ function arkBTDetailHtml(results, dates, cur, mkt) {
   if (!day) return `<div class="ark-bt-detail">${head}</div>`;
   const sd = mkt === "US" ? 2 : 0;
   const mv = (day.positions || []).reduce((s, p) => s + p.value, 0);
-  const rows = (day.positions || []).map((p) => {
-    const ret = p.avgCost > 0 ? p.price / p.avgCost - 1 : 0;
-    return `<tr><td>${escapeHtml(p.symbol)}</td><td>${formatNumber(p.shares, sd)}</td><td>${formatNumber(p.avgCost, 2)}</td><td>${formatNumber(p.price, 2)}</td><td>${formatNumber(p.value, 0)}</td><td class="${ret >= 0 ? "is-pos" : "is-neg"}">${ret >= 0 ? "+" : ""}${(ret * 100).toFixed(1)}%</td></tr>`;
-  }).join("");
-  const trades = (day.trades || []).map((t) => t.type === "sell"
-    ? `<span class="ark-bt-trade is-sell">賣 ${escapeHtml(t.symbol)} ${formatNumber(t.qty, sd)} 股（${t.ret >= 0 ? "+" : ""}${(t.ret * 100).toFixed(1)}%）</span>`
-    : `<span class="ark-bt-trade is-buy">買 ${escapeHtml(t.symbol)} ${formatNumber(t.qty, sd)} 股 @${formatNumber(t.price, 2)}</span>`).join("");
+  // 代號後直接標當天變動：買 +股數、賣 −股數；整筆賣掉的列灰色保留（v0.52.2）
+  const delta = new Map();
+  for (const t of day.trades || []) delta.set(t.symbol, (delta.get(t.symbol) || 0) + (t.type === "buy" ? t.qty : -t.qty));
+  const tag = (sym) => {
+    const d = delta.get(sym);
+    if (!d) return "";
+    return ` <span class="ark-bt-delta ${d > 0 ? "is-buy" : "is-sell"}">${d > 0 ? "+" : "−"}${formatNumber(Math.abs(d), sd)}</span>`;
+  };
+  const retCell = (ret) => `<td class="${ret >= 0 ? "is-pos" : "is-neg"}">${ret >= 0 ? "+" : ""}${(ret * 100).toFixed(1)}%</td>`;
+  const held = new Set((day.positions || []).map((p) => p.symbol));
+  // 照代號排序（含整筆賣出的列），v0.52.2
+  const rows = [
+    ...(day.positions || []).map((p) => {
+      const ret = p.avgCost > 0 ? p.price / p.avgCost - 1 : 0;
+      return { sym: p.symbol, html: `<tr><td>${escapeHtml(p.symbol)}${tag(p.symbol)}</td><td>${formatNumber(p.shares, sd)}</td><td>${formatNumber(p.avgCost, 2)}</td><td>${formatNumber(p.price, 2)}</td><td>${formatNumber(p.value, 0)}</td>${retCell(ret)}</tr>` };
+    }),
+    ...(day.trades || []).filter((t) => t.type === "sell" && !held.has(t.symbol)).map((t) =>
+      ({ sym: t.symbol, html: `<tr class="is-soldout"><td>${escapeHtml(t.symbol)}${tag(t.symbol)}</td><td>0</td><td>—</td><td>${formatNumber(t.price, 2)}</td><td>0</td>${retCell(t.ret)}</tr>` })),
+  ].sort((a, b) => String(a.sym).localeCompare(String(b.sym), undefined, { numeric: true })).map((r) => r.html).join("");
   return `<div class="ark-bt-detail">${head}
     <div class="ark-bt-summary">
       <span>總值 <b>${cur}${formatNumber(day.value, 0)}</b></span>
       <span>現金 <b>${cur}${formatNumber(day.cash, 0)}</b></span>
       <span>持股 <b>${cur}${formatNumber(mv, 0)}</b></span>
-      <span>水位 ${day.level || "—"}%</span>
-      <span>當天閒錢 ${cur}${formatNumber(day.idle || 0, 0)}</span>
+      ${res.usOnly ? "" : `<span>水位 ${day.level || "—"}%</span><span>當天閒錢 ${cur}${formatNumber(day.idle || 0, 0)}</span>`}
     </div>
-    ${trades ? `<div class="ark-bt-trades">${trades}</div>` : `<p class="muted-text ark-bt-note">當天沒有交易</p>`}
+    ${(day.trades || []).length ? "" : `<p class="muted-text ark-bt-note">當天沒有交易</p>`}
     ${rows ? `<table class="ark-bt-table ark-bt-pos"><thead><tr><th>代號</th><th>股數</th><th>均價</th><th>收盤</th><th>市值</th><th>報酬</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="muted-text ark-bt-note">收盤後沒有持股</p>`}
   </div>`;
 }
