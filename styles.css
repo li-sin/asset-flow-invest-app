@@ -4169,3 +4169,16 @@ textarea {
 .ark-bt-table td.is-neg { color: var(--green); }
 .ark-bt-chart { position: relative; margin-top: 10px; }
 .ark-bt-unit, .ark-bt-note { font-size: var(--fs-caption); margin: 4px 0 0; }
+.ark-bt-bands { position: absolute; left: 0; right: 0; top: 0; }
+.ark-bt-band { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.ark-bt-band:hover { background: rgba(142, 142, 147, 0.08); }
+.ark-bt-band.is-active { background: rgba(77, 163, 255, 0.15); border-left: 1px solid var(--blue); border-right: 1px solid var(--blue); }
+.ark-bt-detail { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.ark-bt-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ark-bt-summary { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--fs-caption); color: var(--muted); margin: 6px 0; }
+.ark-bt-summary b { color: var(--ink); }
+.ark-bt-trades { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.ark-bt-trade { font-size: var(--fs-caption); padding: 2px 6px; border-radius: 6px; background: var(--bg); }
+.ark-bt-trade.is-buy { color: var(--red); }
+.ark-bt-trade.is-sell { color: var(--green); }
+.ark-bt-pos { margin-top: 6px; }

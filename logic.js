@@ -191,6 +191,7 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
     let mv = mvOf(day.date);
     const total = cash + mv;
     let sold = 0, bought = 0;
+    const trades = []; // 當天交易明細（回測細節面板用，v0.52.1）
     // 調節：持股超過水位 → 報酬率最低先整筆賣
     if (mv > w * total + 1e-9) {
       const ranked = [...holdings.entries()]
@@ -199,6 +200,7 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
       for (const { sym, h, p } of ranked) {
         if (mv <= w * total + 1e-9) break;
         cash += h.shares * p; mv -= h.shares * p; holdings.delete(sym); sold++;
+        trades.push({ type: "sell", symbol: sym, qty: h.shares, price: p, ret: p / (h.cost / h.shares) - 1 });
       }
     }
     const idle = w * total - mv;
@@ -218,12 +220,17 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
         const c = o.qty * o.p;
         if (!(o.qty > 0) || c > cash + 1e-9) continue;
         cash -= c; bought++;
+        trades.push({ type: "buy", symbol: o.symbol, qty: o.qty, price: o.p });
         const h = holdings.get(o.symbol) || { shares: 0, cost: 0, lastPrice: o.p };
         h.shares += o.qty; h.cost += c; h.lastPrice = o.p;
         holdings.set(o.symbol, h);
       }
     }
-    series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought });
+    const positions = [...holdings.entries()].map(([symbol, h]) => {
+      const price = px(symbol, day.date) || 0;
+      return { symbol, shares: h.shares, avgCost: h.cost / h.shares, price, value: h.shares * price };
+    }).sort((a, b) => b.value - a.value);
+    series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle, level: Number(day.level), positions, trades });
   }
   const start = Number(startCapital) || 0;
   const last = series[series.length - 1];

@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.0";
+const APP_VERSION = "v0.52.1";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -94,6 +94,7 @@ const state = {
   batchFirstBuyMode: {},
   detailEditMode: {},
   arkBPSubTab: "record",
+  arkBTSel: { date: null, strategy: null }, // 回測曲線點選的日期／戰法（細節面板，v0.52.1）
   arkBTCloses: { TW: "idle", US: "idle" }, // 回測歷史收盤：idle/loading/done（各市場只抓一次）
   arkBPMarket: "TW",
   arkBPRecords: [],
@@ -7377,11 +7378,57 @@ function renderArkBacktestTab() {
         <thead><tr><th>戰法</th><th>目前總值</th><th>總報酬</th><th>年化</th><th>持股數</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <div class="level-chart-container ark-bt-chart">${chartDates.length > 1 ? renderTimedSvg(series, chartDates, 600, 180) : '<p class="muted-text">至少要 2 個記錄日才畫得出曲線。</p>'}</div>
-      <p class="muted-text ark-bt-unit">曲線＝累積報酬 %</p>
+      <div class="level-chart-container ark-bt-chart">${chartDates.length > 1 ? renderTimedSvg(series, chartDates, 600, 180) + arkBTBandsHtml(chartDates) : '<p class="muted-text">至少要 2 個記錄日才畫得出曲線。</p>'}</div>
+      <p class="muted-text ark-bt-unit">曲線＝累積報酬 %，點圖上某一天看各戰法當天的持股與現金</p>
+      ${arkBTDetailHtml(results, chartDates, cur, mkt)}
       ${notes.map((n) => `<p class="muted-text ark-bt-note">${escapeHtml(n)}</p>`).join("")}
       <p class="muted-text ark-bt-note">100 美元／1 股戰法：等「庫存位階最高」累積資料後加入。</p>
     </section>`;
+}
+
+// 曲線上的透明日期區塊（位置算法同 renderTimedSvg：W=600、PL=52、PR=8、PB=24）
+function arkBTBandsHtml(dates) {
+  const W = 600, H = 180, PL = 52, PR = 8, PB = 24, cW = W - PL - PR;
+  const t0 = Date.parse(dates[0]), span = (Date.parse(dates[dates.length - 1]) - t0) || 1;
+  const xs = dates.map((d) => PL + ((Date.parse(d) - t0) / span) * cW);
+  return `<div class="ark-bt-bands" style="bottom:${(PB / H) * 100}%">${dates.map((d, i) => {
+    const l = i === 0 ? PL : (xs[i - 1] + xs[i]) / 2;
+    const r = i === dates.length - 1 ? W - PR : (xs[i] + xs[i + 1]) / 2;
+    return `<button type="button" class="ark-bt-band${state.arkBTSel.date === d ? " is-active" : ""}" data-ark-bt-date="${d}" title="${d}" style="left:${(l / W) * 100}%;width:${((r - l) / W) * 100}%"></button>`;
+  }).join("")}</div>`;
+}
+
+// 點選日期 → 選戰法 → 顯示當天（收盤後）的持股、現金、交易
+function arkBTDetailHtml(results, dates, cur, mkt) {
+  const sel = state.arkBTSel;
+  if (!sel.date || !dates.includes(sel.date)) return "";
+  const btns = results.map(({ key, label, color }) =>
+    `<button type="button" class="holdings-subtab${sel.strategy === key ? " is-active" : ""}" data-ark-bt-strategy="${key}"><span class="level-legend-dot" style="background:${color}"></span>${label}</button>`).join("");
+  const head = `<div class="ark-bt-detail-head"><b>${sel.date}</b><div class="holdings-subtabs">${btns}</div></div>`;
+  const res = results.find((x) => x.key === sel.strategy);
+  if (!res) return `<div class="ark-bt-detail">${head}<p class="muted-text">選一個戰法看這天的持股與現金</p></div>`;
+  const day = res.r.series.find((p) => p.date === sel.date);
+  if (!day) return `<div class="ark-bt-detail">${head}</div>`;
+  const sd = mkt === "US" ? 2 : 0;
+  const mv = (day.positions || []).reduce((s, p) => s + p.value, 0);
+  const rows = (day.positions || []).map((p) => {
+    const ret = p.avgCost > 0 ? p.price / p.avgCost - 1 : 0;
+    return `<tr><td>${escapeHtml(p.symbol)}</td><td>${formatNumber(p.shares, sd)}</td><td>${formatNumber(p.avgCost, 2)}</td><td>${formatNumber(p.price, 2)}</td><td>${formatNumber(p.value, 0)}</td><td class="${ret >= 0 ? "is-pos" : "is-neg"}">${ret >= 0 ? "+" : ""}${(ret * 100).toFixed(1)}%</td></tr>`;
+  }).join("");
+  const trades = (day.trades || []).map((t) => t.type === "sell"
+    ? `<span class="ark-bt-trade is-sell">賣 ${escapeHtml(t.symbol)} ${formatNumber(t.qty, sd)} 股（${t.ret >= 0 ? "+" : ""}${(t.ret * 100).toFixed(1)}%）</span>`
+    : `<span class="ark-bt-trade is-buy">買 ${escapeHtml(t.symbol)} ${formatNumber(t.qty, sd)} 股 @${formatNumber(t.price, 2)}</span>`).join("");
+  return `<div class="ark-bt-detail">${head}
+    <div class="ark-bt-summary">
+      <span>總值 <b>${cur}${formatNumber(day.value, 0)}</b></span>
+      <span>現金 <b>${cur}${formatNumber(day.cash, 0)}</b></span>
+      <span>持股 <b>${cur}${formatNumber(mv, 0)}</b></span>
+      <span>水位 ${day.level || "—"}%</span>
+      <span>當天閒錢 ${cur}${formatNumber(day.idle || 0, 0)}</span>
+    </div>
+    ${trades ? `<div class="ark-bt-trades">${trades}</div>` : `<p class="muted-text ark-bt-note">當天沒有交易</p>`}
+    ${rows ? `<table class="ark-bt-table ark-bt-pos"><thead><tr><th>代號</th><th>股數</th><th>均價</th><th>收盤</th><th>市值</th><th>報酬</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="muted-text ark-bt-note">收盤後沒有持股</p>`}
+  </div>`;
 }
 
 function renderArkBuyingPower(positions) {
@@ -8953,6 +9000,20 @@ function renderCloudSnapshot() {
     btn.addEventListener("click", () => {
       state.arkBPSubTab = btn.dataset.arkBpSubtab || "record";
       state.tabFadePending = true;
+      renderCloudSnapshot();
+    });
+  });
+  els.cloudSnapshot.querySelectorAll("[data-ark-bt-date]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const d = btn.dataset.arkBtDate;
+      state.arkBTSel.date = state.arkBTSel.date === d ? null : d;
+      renderCloudSnapshot();
+    });
+  });
+  els.cloudSnapshot.querySelectorAll("[data-ark-bt-strategy]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.arkBTSel.strategy = btn.dataset.arkBtStrategy;
       renderCloudSnapshot();
     });
   });
