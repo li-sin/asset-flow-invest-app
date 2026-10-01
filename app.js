@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.5";
+const APP_VERSION = "v0.52.6";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7326,8 +7326,13 @@ function buildArkBacktestInput(mkt) {
   const dates = [...new Set(recs.map((r) => r.date))].sort();
   const fxAt = (d) => (mkt === "US" ? historicalUsdTwdRate(d) : 1);
   const snaps = (state.cloudHistory.snapshots || []).filter((s) => normalizeMarketKey(s.market) === mkt && s.date);
+  // 美股起點不早於開始記位階的第一天（Sin 定：1 股／100 美元每天要賣位階最高，沒位階的日子不回測，v0.52.6）
+  const rankStart = mkt === "US"
+    ? ((state.arkRankRecords || []).filter((x) => x.market === "US").map((x) => x.date).sort()[0] || "9999-99-99")
+    : "";
   let start = null;
   for (const d of dates) {
+    if (d < rankStart) continue;
     const idle = recs.find((r) => r.date === d)?.idleCash || 0;
     const level = targetLevelFromHistory(mkt, d);
     if (!idle || idle === 100000 || !level) continue;
@@ -7342,7 +7347,7 @@ function buildArkBacktestInput(mkt) {
       holdings: pos.map((p) => ({ symbol: p.symbol, shares: Number(p.shares), avgCost: Number(p.avgCost) || 0 })) };
     break;
   }
-  if (!start) return { start: null, days: [] };
+  if (!start) return { start: null, days: [], rankStart };
   const days = dates.filter((d) => d >= start.date).map((d) => {
     const zone = recs.filter((r) => r.date === d && (r.cat || "ETF") === ARK_BT_ZONE[mkt]);
     return {
@@ -7360,7 +7365,10 @@ function renderArkBacktestTab() {
   const cur = mkt === "US" ? "US$" : "NT$";
   if (state.arkBTCloses[mkt] === "idle") setTimeout(() => fetchArkBacktestCloses(mkt), 0);
   if (state.arkBTCloses[mkt] !== "done") return `<section class="dashboard-card"><p class="muted-text">載入${mkt === "US" ? "美股" : "台股"}歷史收盤價中…</p></section>`;
-  const { start, days, fxAt } = buildArkBacktestInput(mkt);
+  const { start, days, fxAt, rankStart } = buildArkBacktestInput(mkt);
+  if (!start && mkt === "US" && rankStart === "9999-99-99") {
+    return `<section class="dashboard-card"><p class="muted-text">美股回測從開始記「庫存位階最高」那天起算，目前還沒有位階紀錄。</p></section>`;
+  }
   if (!start) {
     return `<section class="dashboard-card"><p class="muted-text">找不到回測起點：需要一天「閒錢不是 10 萬」、有${mkt === "US" ? "美股" : "台股"}水位、且當天以前有庫存快照的方舟紀錄。</p></section>`;
   }
@@ -7379,7 +7387,7 @@ function renderArkBacktestTab() {
   const over10 = days.filter((d) => d.picks.length > 10).map((d) => d.date.slice(5));
   const noLevel = days.filter((d) => !d.level).length;
   const notes = [
-    `起點 ${start.date}，起始資金 ${cur}${formatNumber(start.capital, 0)}（推算總資產，快照 ${start.snapDate.slice(5)}${mkt === "US" ? `，匯率 ${start.fx.toFixed(2)}` : ""}${start.missing ? `，⚠️ ${start.missing} 支缺收盤價未計入` : ""}）`,
+    `起點 ${start.date}${mkt === "US" ? "（開始記位階後）" : ""}，起始資金 ${cur}${formatNumber(start.capital, 0)}（推算總資產，快照 ${start.snapDate.slice(5)}${mkt === "US" ? `，匯率 ${start.fx.toFixed(2)}` : ""}${start.missing ? `，⚠️ ${start.missing} 支缺收盤價未計入` : ""}）`,
     `各戰法從起點當天的實際持股（${start.holdings.length} 支）開始；共 ${days.length} 個記錄日；只算${mkt === "US" ? "產業" : "ETF"}價值區；以當天收盤價成交`,
     over10.length ? `⚠️ 價值區超過 10 檔的日子：${over10.join("、")}` : "",
     noLevel ? `⚠️ ${noLevel} 天缺水位，水位類戰法當天不交易` : "",
@@ -7455,7 +7463,8 @@ function arkBTDetailHtml(results, dates, cur, mkt) {
       <span>總值 <b>${cur}${formatNumber(day.value, 0)}</b></span>
       <span>現金 <b>${cur}${formatNumber(day.cash, 0)}</b></span>
       <span>持股 <b>${cur}${formatNumber(mv, 0)}</b></span>
-      ${res.usOnly ? "" : `<span>水位 ${day.level || "—"}%</span><span>當天閒錢 ${cur}${formatNumber(day.idle || 0, 0)}</span>`}
+      <span>水位 ${day.level || "—"}%</span><span>當天閒錢 ${cur}${formatNumber(day.idle || 0, 0)}${res.usOnly ? "（僅供參考，不影響買賣）" : ""}</span>
+      ${res.usOnly && day.idle < 0 ? `<span class="ark-bt-over">超出建議持股 ${cur}${formatNumber(-day.idle, 0)}</span>` : ""}
     </div>
     ${(day.trades || []).length ? "" : `<p class="muted-text ark-bt-note">當天沒有交易</p>`}
     ${rows ? `<table class="ark-bt-table ark-bt-pos"><thead><tr><th>代號</th><th>股數</th><th>均價</th><th>收盤</th><th>市值</th><th>報酬</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="muted-text ark-bt-note">收盤後沒有持股</p>`}
