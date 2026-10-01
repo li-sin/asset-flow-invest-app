@@ -5,6 +5,7 @@ import {
   stripHeaderRow, computeFirstBuyMerge,
   arkBPPrefillRows, arkBPShareChanged, arkBPRowUpdated, arkBPRowStatus,
   newSymbolsVsPrevSnapshot,
+  simulateArkStrategy,
 } from './logic.js';
 
 window.taipeiNow = taipeiNow;
@@ -21,3 +22,4 @@ window.arkBPShareChanged = arkBPShareChanged;
 window.arkBPRowUpdated = arkBPRowUpdated;
 window.arkBPRowStatus = arkBPRowStatus;
 window.newSymbolsVsPrevSnapshot = newSymbolsVsPrevSnapshot;
+window.simulateArkStrategy = simulateArkStrategy;

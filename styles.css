@@ -4159,3 +4159,13 @@ textarea {
 .ark-rank-pick { display: inline-flex; align-items: center; gap: 4px; }
 .ark-rank-pick select { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font-size: var(--fs-caption); }
 .ark-rank-pick select.is-stale { color: var(--muted); }
+
+/* 方舟戰法回測（v0.52.0） */
+.ark-bt-table { width: 100%; border-collapse: collapse; font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
+.ark-bt-table th { text-align: right; color: var(--muted); font-weight: 500; font-size: var(--fs-caption); padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.ark-bt-table th:first-child, .ark-bt-table td:first-child { text-align: left; }
+.ark-bt-table td { text-align: right; padding: 6px; border-bottom: 1px solid rgba(58, 58, 60, 0.15); white-space: nowrap; }
+.ark-bt-table td.is-pos { color: var(--red); }
+.ark-bt-table td.is-neg { color: var(--green); }
+.ark-bt-chart { position: relative; margin-top: 10px; }
+.ark-bt-unit, .ark-bt-note { font-size: var(--fs-caption); margin: 4px 0 0; }

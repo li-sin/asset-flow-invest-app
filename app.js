@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.51.1";
+const APP_VERSION = "v0.52.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -94,6 +94,7 @@ const state = {
   batchFirstBuyMode: {},
   detailEditMode: {},
   arkBPSubTab: "record",
+  arkBTCloses: { TW: "idle", US: "idle" }, // 回測歷史收盤：idle/loading/done（各市場只抓一次）
   arkBPMarket: "TW",
   arkBPRecords: [],
   arkBPHistDate: null,
@@ -7175,6 +7176,9 @@ async function saveArkBPRecords() {
   const mkt = state.arkBPMarket || "TW";
   const validRows = state.arkBPRows.filter((r) => r.symbol && marketForSymbol(r.symbol) === mkt);
   if (!validRows.length) { alert("至少要有一筆" + (mkt === "TW" ? "台股" : "美股") + "股票資料"); return; }
+  // 價值區應為 10 檔（台股只布局 ETF 價值區）：超過就請 Sin 確認，避免回測多買（v0.52.0）
+  const etfCount = mkt === "TW" ? validRows.filter((r) => (r.cat || "ETF") === "ETF").length : 0;
+  if (etfCount > 10 && !confirm(`ETF 價值區有 ${etfCount} 檔（超過 10 檔），確定要這樣儲存？`)) return;
   state.arkBPSaving = true;
   renderCloudSnapshot();
   try {
@@ -7276,6 +7280,110 @@ function arkBPClassifySignals(records) {
   return signals;
 }
 
+// ===== 方舟戰法回測（v0.52.0，vault「戰法回測計畫」）=====
+// 台股只算 ETF 價值區、美股只算產業價值區；黃色股數／風控 100%／風控 50%（100 美元／1 股待位階資料累積）
+const ARK_BT_ZONE = { TW: "ETF", US: "IND" };
+const ARK_BT_STRATEGIES = [
+  { key: "yellow", label: "黃色股數", kind: "yellow", color: "var(--chart-1)" },
+  { key: "risk100", label: "風控 100%", kind: "risk", riskDiv: 10, color: "var(--chart-2)" },
+  { key: "risk50", label: "風控 50%", kind: "risk", riskDiv: 20, color: "var(--chart-3)" },
+];
+
+async function fetchArkBacktestCloses(mkt) {
+  if (state.arkBTCloses[mkt] !== "idle" || !googleAccessToken) return;
+  const recs = state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === mkt);
+  const dates = recs.map((r) => r.date).sort();
+  if (!dates.length) { state.arkBTCloses[mkt] = "done"; return; }
+  state.arkBTCloses[mkt] = "loading";
+  const held = (state.cloudHistory.positions || []).filter((p) => marketForSymbol(p.symbol) === mkt).map((p) => p.symbol);
+  const symbols = [...new Set([...recs.map((r) => r.symbol), ...held, ...(mkt === "US" ? ["USDTWD=X"] : [])])].map(formatYahooSymbol).filter(Boolean);
+  try {
+    for (let i = 0; i < symbols.length; i += 20) {
+      const params = new URLSearchParams({ mode: "history", symbols: symbols.slice(i, i + 20).join(","), start: dates[0], end: today(), interval: "1d" });
+      const res = await fetch(`${QUOTE_PROXY_URL}?${params.toString()}`);
+      mergeHistoricalCloses(normalizeHistoricalClosePayload(await res.json()));
+    }
+  } catch (e) { console.warn("fetchArkBacktestCloses", e); }
+  state.arkBTCloses[mkt] = "done";
+  if (state.dashboardTab === "ark") renderCloudSnapshot();
+}
+
+// 回測輸入：起點＝第一個「閒錢不是 10 萬」且推算得出總資產的記錄日；起始資金＝推算總資產（美股換成美元）
+function buildArkBacktestInput(mkt) {
+  const recs = state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === mkt);
+  const dates = [...new Set(recs.map((r) => r.date))].sort();
+  const fxAt = (d) => (mkt === "US" ? historicalUsdTwdRate(d) : 1);
+  const snaps = (state.cloudHistory.snapshots || []).filter((s) => normalizeMarketKey(s.market) === mkt && s.date);
+  let start = null;
+  for (const d of dates) {
+    const idle = recs.find((r) => r.date === d)?.idleCash || 0;
+    const level = targetLevelFromHistory(mkt, d);
+    if (!idle || idle === 100000 || !level) continue;
+    const snap = snaps.filter((s) => s.date <= d).sort((a, b) => b.date.localeCompare(a.date))[0];
+    if (!snap) continue;
+    const pos = (state.cloudHistory.positions || []).filter((p) => p.snapshotId === snap.snapshotId && Number(p.shares) > 0);
+    let held = 0, missing = 0;
+    for (const p of pos) { const c = historicalClose(p.symbol, d); if (c > 0) held += Number(p.shares) * c; else missing++; }
+    const fx = fxAt(d);
+    const totalTwd = (held * fx + idle) / (level / 100);
+    start = { date: d, capital: totalTwd / fx, snapDate: snap.date, missing, fx,
+      holdings: pos.map((p) => ({ symbol: p.symbol, shares: Number(p.shares), avgCost: Number(p.avgCost) || 0 })) };
+    break;
+  }
+  if (!start) return { start: null, days: [] };
+  const days = dates.filter((d) => d >= start.date).map((d) => {
+    const zone = recs.filter((r) => r.date === d && (r.cat || "ETF") === ARK_BT_ZONE[mkt]);
+    return {
+      date: d,
+      level: targetLevelFromHistory(mkt, d),
+      picks: zone.map((r) => ({ symbol: r.symbol, norm: arkBPNormalize(r.shares, r.idleCash) })),
+    };
+  });
+  return { start, days, fxAt };
+}
+
+function renderArkBacktestTab() {
+  const mkt = state.arkBPMarket || "TW";
+  const cur = mkt === "US" ? "US$" : "NT$";
+  if (state.arkBTCloses[mkt] === "idle") setTimeout(() => fetchArkBacktestCloses(mkt), 0);
+  if (state.arkBTCloses[mkt] !== "done") return `<section class="dashboard-card"><p class="muted-text">載入${mkt === "US" ? "美股" : "台股"}歷史收盤價中…</p></section>`;
+  const { start, days, fxAt } = buildArkBacktestInput(mkt);
+  if (!start) {
+    return `<section class="dashboard-card"><p class="muted-text">找不到回測起點：需要一天「閒錢不是 10 萬」、有${mkt === "US" ? "美股" : "台股"}水位、且當天以前有庫存快照的方舟紀錄。</p></section>`;
+  }
+  const priceAt = (s, d) => historicalClose(s, d);
+  const unit = mkt === "US" ? 0.01 : 1;
+  const results = ARK_BT_STRATEGIES.map((st) => ({ ...st, r: simulateArkStrategy({ days, priceAt, fxAt, startCapital: start.capital, unit, kind: st.kind, riskDiv: st.riskDiv, initialHoldings: start.holdings }) }));
+  const pct = (v) => (v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`);
+  const rows = results.map(({ label, color, r }) => `
+    <tr><td><span class="level-legend-dot" style="background:${color}"></span>${label}</td>
+      <td>${cur}${formatNumber(r.finalValue, 0)}</td>
+      <td class="${r.totalReturn >= 0 ? "is-pos" : "is-neg"}">${pct(r.totalReturn)}</td>
+      <td>${r.spanDays >= 30 ? pct(r.annualized) : '<span class="muted-text">未滿 30 天</span>'}</td>
+      <td>${r.holdings.length}</td></tr>`).join("");
+  const series = results.map(({ key, color, r }) => ({ key, color, pts: r.series.map((p) => ({ d: p.date, v: Math.round((p.value / start.capital - 1) * 10000) / 100 })) }));
+  const chartDates = days.map((d) => d.date);
+  const over10 = days.filter((d) => d.picks.length > 10).map((d) => d.date.slice(5));
+  const noLevel = days.filter((d) => !d.level).length;
+  const notes = [
+    `起點 ${start.date}，起始資金 ${cur}${formatNumber(start.capital, 0)}（推算總資產，快照 ${start.snapDate.slice(5)}${mkt === "US" ? `，匯率 ${start.fx.toFixed(2)}` : ""}${start.missing ? `，⚠️ ${start.missing} 支缺收盤價未計入` : ""}）`,
+    `各戰法從起點當天的實際持股（${start.holdings.length} 支）開始；共 ${days.length} 個記錄日；只算${mkt === "US" ? "產業" : "ETF"}價值區；以當天收盤價成交`,
+    over10.length ? `⚠️ 價值區超過 10 檔的日子：${over10.join("、")}` : "",
+    noLevel ? `⚠️ ${noLevel} 天缺水位，當天不交易` : "",
+  ].filter(Boolean);
+  return `
+    <section class="dashboard-card ark-bt-card">
+      <table class="ark-bt-table">
+        <thead><tr><th>戰法</th><th>目前總值</th><th>總報酬</th><th>年化</th><th>持股數</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="level-chart-container ark-bt-chart">${chartDates.length > 1 ? renderTimedSvg(series, chartDates, 600, 180) : '<p class="muted-text">至少要 2 個記錄日才畫得出曲線。</p>'}</div>
+      <p class="muted-text ark-bt-unit">曲線＝累積報酬 %</p>
+      ${notes.map((n) => `<p class="muted-text ark-bt-note">${escapeHtml(n)}</p>`).join("")}
+      <p class="muted-text ark-bt-note">100 美元／1 股戰法：等「庫存位階最高」累積資料後加入。</p>
+    </section>`;
+}
+
 function renderArkBuyingPower(positions) {
   const subtabBtn = (key, label) =>
     `<button class="holdings-subtab${state.arkBPSubTab === key ? " is-active" : ""}" data-ark-bp-subtab="${key}" type="button">${label}</button>`;
@@ -7288,13 +7396,16 @@ function renderArkBuyingPower(positions) {
 
   const recordTab = renderArkBPRecordTab(positions);
   const historyTab = renderArkBPHistoryTab();
-  const content = state.arkBPSubTab === "history" ? historyTab : recordTab;
+  const content = state.arkBPSubTab === "history" ? historyTab
+    : state.arkBPSubTab === "backtest" ? renderArkBacktestTab()
+    : recordTab;
 
   return `
     <section class="dashboard-card holdings-nav-card">
       <div class="holdings-subtabs">
         ${subtabBtn("record", "今日記錄")}
         ${subtabBtn("history", "歷史紀錄")}
+        ${subtabBtn("backtest", "回測")}
       </div>
       <div class="holdings-subtabs" style="margin-top:6px">
         ${mktBtn("TW", "台股")}
