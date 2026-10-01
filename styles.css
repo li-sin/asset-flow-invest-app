@@ -4150,3 +4150,12 @@ textarea {
 .sk-tile { height: 76px; }
 .sk-card { height: 150px; }
 .sk-chart { height: 200px; }
+
+/* 方舟今日記錄：推算總資產＋庫存位階最高（v0.51.0，戰法回測） */
+.ark-bp-derived { font-size: var(--fs-caption); margin: 4px 0 6px; }
+.ark-bp-derived b { color: var(--ink); }
+.ark-rank-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; font-size: var(--fs-caption); color: var(--muted); }
+.ark-rank-title { color: var(--ink); }
+.ark-rank-pick { display: inline-flex; align-items: center; gap: 4px; }
+.ark-rank-pick select { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font-size: var(--fs-caption); }
+.ark-rank-pick select.is-stale { color: var(--muted); }
