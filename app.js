@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.9";
+const APP_VERSION = "v0.53.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -45,7 +45,7 @@ const SHEET_HEADERS = {
   firstBuy: ["symbol", "first_buy_date", "market"],
   refillState: ["market", "symbol", "shares", "avg_cost", "updated_at"],
   cashPlan: ["說明", "金額", "預計年月"],
-  buyingPower: ["date", "idle_cash", "symbol", "shares", "cat", "updated_on"],
+  buyingPower: ["date", "idle_cash", "symbol", "shares", "cat", "updated_on", "calc_cash"],
   arkRank: ["date", "market", "rank", "symbol"],
 };
 const SYMBOL_NAMES = {};
@@ -104,6 +104,7 @@ const state = {
   arkBPLoading: false,
   arkBPSaving: false,
   arkBPIdleCash: "",
+  arkBPCalcCash: "", // 方舟試算閒錢：閒錢少時在方舟用較大金額抄股數（選填，空＝同實際閒錢）
   arkRankRecords: [], // [{ date, market, rank, symbol }]
   arkRankSel: { 1: "", 2: "" }, // 今日記錄（美股）位階最高 2 支：帶入上次，改過才算已更新
   arkRankSelDate: "",
@@ -3625,7 +3626,7 @@ async function ensureSheetTables() {
   await updateSheetValues(SHEET_NAMES.firstBuy, "A1:C1", [SHEET_HEADERS.firstBuy]);
   await updateSheetValues(SHEET_NAMES.refillState, "A1:E1", [SHEET_HEADERS.refillState]);
   await updateSheetValues(SHEET_NAMES.cashPlan, "A1:C1", [SHEET_HEADERS.cashPlan]);
-  await updateSheetValues(SHEET_NAMES.buyingPower, "A1:F1", [SHEET_HEADERS.buyingPower]);
+  await updateSheetValues(SHEET_NAMES.buyingPower, "A1:G1", [SHEET_HEADERS.buyingPower]);
   await updateSheetValues(SHEET_NAMES.arkRank, "A1:D1", [SHEET_HEADERS.arkRank]);
 }
 
@@ -7096,7 +7097,7 @@ async function loadBuyingPowerRecords(silent) {
   state.arkBPLoading = true;
   if (!silent) renderCloudSnapshot();
   try {
-    const rows = await readSheetValues(SHEET_NAMES.buyingPower, "A:F");
+    const rows = await readSheetValues(SHEET_NAMES.buyingPower, "A:G");
     const records = [];
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i];
@@ -7108,6 +7109,7 @@ async function loadBuyingPowerRecords(silent) {
         shares: Number(r[3]) || 0,
         cat: String(r[4] || "ETF"),
         updatedOn: String(r[5] || r[0] || ""),
+        calcCash: Number(r[6]) || 0, // 方舟試算閒錢（0＝同實際閒錢），v0.53.0
       });
     }
     state.arkBPRecords = records;
@@ -7193,14 +7195,11 @@ async function saveArkBPRecords() {
   try {
     const date = state.arkBPDate || today();
     const kept = state.arkBPRecords.filter((r) => !(r.date === date && marketForSymbol(r.symbol) === mkt));
-    const newEntries = validRows.map((r) => ({ date, idleCash: cash, symbol: r.symbol.toUpperCase(), shares: Number(r.shares), cat: r.cat || "ETF",
+    const calc = Number(state.arkBPCalcCash) > 0 && Number(state.arkBPCalcCash) !== cash ? Number(state.arkBPCalcCash) : 0;
+    const newEntries = validRows.map((r) => ({ date, idleCash: cash, calcCash: calc, symbol: r.symbol.toUpperCase(), shares: Number(r.shares), cat: r.cat || "ETF",
       updatedOn: arkBPRowUpdated(r) || !r.updatedOn ? date : r.updatedOn }));
     const allRecords = [...kept, ...newEntries];
-    await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
-    if (allRecords.length) {
-      const sheetRows = allRecords.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date]);
-      await updateSheetValues(SHEET_NAMES.buyingPower, `A2:F${sheetRows.length + 1}`, sheetRows);
-    }
+    await writeBuyingPowerRecords(allRecords);
     if (mkt === "US") await saveArkRankRecords(date);
     await loadBuyingPowerRecords();
   } catch (e) {
@@ -7226,6 +7225,14 @@ async function saveArkRankRecords(date) {
 }
 
 // idx 有值＝只刪那一筆（同日同代號重複時用，v0.52.5）
+// 方舟紀錄整表寫回 Sheet（A:G；G＝試算閒錢，0 寫空白）
+async function writeBuyingPowerRecords(records) {
+  await clearSheetValues(SHEET_NAMES.buyingPower, "A2:G");
+  if (!records.length) return;
+  const rows = records.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date, r.calcCash || ""]);
+  await updateSheetValues(SHEET_NAMES.buyingPower, `A2:G${rows.length + 1}`, rows);
+}
+
 async function deleteArkBPDate(date, symbol = "", idx = "") {
   const msg = symbol ? `確定刪除 ${date} 的 ${symbol}${idx !== "" ? "（這一筆）" : ""}？` : `確定刪除 ${date} 的所有記錄？`;
   if (!confirm(msg)) return;
@@ -7234,11 +7241,7 @@ async function deleteArkBPDate(date, symbol = "", idx = "") {
     const remaining = target
       ? state.arkBPRecords.filter((r) => r !== target)
       : state.arkBPRecords.filter((r) => r.date !== date || (symbol && r.symbol !== symbol));
-    await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
-    if (remaining.length) {
-      const sheetRows = remaining.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date]);
-      await updateSheetValues(SHEET_NAMES.buyingPower, `A2:F${sheetRows.length + 1}`, sheetRows);
-    }
+    await writeBuyingPowerRecords(remaining);
     if (!symbol && state.arkRankRecords.some((r) => r.date === date)) {
       await writeArkRankRecords(state.arkRankRecords.filter((r) => r.date !== date));
     }
@@ -7249,6 +7252,10 @@ async function deleteArkBPDate(date, symbol = "", idx = "") {
 }
 
 // 計算不捨入：美股碎股（如 0.03 股）捨到小數 1 位會變 0，中位數／訊號也跟著失真（v0.50.1）
+// 紀錄的標準化：股數是在「試算閒錢」下抄的就用試算閒錢換算（v0.53.0）
+function arkBPRecNorm(r) {
+  return arkBPNormalize(r.shares, Number(r.calcCash) > 0 ? r.calcCash : r.idleCash);
+}
 function arkBPNormalize(shares, idleCash) {
   if (!idleCash || idleCash <= 0) return shares;
   return shares * (100000 / idleCash);
@@ -7264,7 +7271,7 @@ function arkBPClassifySignals(records) {
   const bySymbol = new Map();
   for (const r of records) {
     if (!r.symbol) continue;
-    const norm = arkBPNormalize(r.shares, r.idleCash);
+    const norm = arkBPRecNorm(r);
     if (!bySymbol.has(r.symbol)) bySymbol.set(r.symbol, []);
     bySymbol.get(r.symbol).push({ ...r, norm });
   }
@@ -7277,7 +7284,7 @@ function arkBPClassifySignals(records) {
   const history = state.targetLevelHistory || [];
   for (const r of records) {
     if (!r.symbol) continue;
-    const norm = arkBPNormalize(r.shares, r.idleCash);
+    const norm = arkBPRecNorm(r);
     const med = medians.get(r.symbol) || 0;
     const isSharesHigh = med > 0 && norm > med * 1.5;
     const dayLevels = history.filter((h) => h.date === r.date);
@@ -7372,7 +7379,7 @@ function buildArkBacktestInput(mkt) {
     return {
       date: d,
       level: targetLevelFromHistory(mkt, d),
-      picks: zone.map((r) => ({ symbol: r.symbol, norm: arkBPNormalize(r.shares, r.idleCash) })),
+      picks: zone.map((r) => ({ symbol: r.symbol, norm: arkBPRecNorm(r) })),
       ranks: (state.arkRankRecords || []).filter((x) => x.market === mkt && x.date === d).sort((a, b) => a.rank - b.rank).map((x) => x.symbol),
     };
   });
@@ -7617,6 +7624,10 @@ function renderArkBPRecordTab(positions) {
         <button class="ark-bp-idle-preset" type="button" id="ark-bp-idle-10w">10萬</button>
         <span class="ark-bp-date-label">${escapeHtml(today)}${alreadyRecordedToday ? " (已有紀錄)" : ""}</span>
       </div>
+      <div class="ark-bp-idle-row ark-bp-calc-row">
+        <label>試算閒錢</label>
+        <input class="ark-bp-idle-input" type="number" inputmode="numeric" id="ark-bp-calc" value="${escapeHtml(state.arkBPCalcCash)}" placeholder="選填：抄股數時方舟填的金額">
+      </div>
       <div id="ark-bp-derived-slot">${arkBPDerivedTotalHtml(mkt)}</div>
       ${mkt === "US" ? arkRankPickerHtml(positions, today) : ""}
       <div class="ark-bp-header">
@@ -7672,7 +7683,7 @@ function renderArkBPHistoryTab() {
   const rowsHtml = sorted.map((r) => {
     const key = `${r.date}_${r.symbol}`;
     const info = signals.get(key) || {};
-    const norm = info.norm ?? arkBPNormalize(r.shares, r.idleCash);
+    const norm = info.norm ?? arkBPRecNorm(r);
     const sig = info.signal || "";
     const dotClass = marketForSymbol(r.symbol) === "US" ? "list-dot-US" : "list-dot-TW";
     const hlClass = sig === "A" ? " is-highlight-a" : sig === "C" ? " is-highlight-c" : "";
@@ -7707,7 +7718,7 @@ function renderArkBPHistoryTab() {
         <button class="ark-bp-hist-nav-btn" data-ark-bp-hist-dir="prev" type="button" ${hasPrev ? "" : "disabled"}>◂</button>
         <span class="ark-bp-hist-nav-date">${escapeHtml(curDate)}</span>
         <button class="ark-bp-hist-nav-btn" data-ark-bp-hist-dir="next" type="button" ${hasNext ? "" : "disabled"}>▸</button>
-        <span class="ark-bp-hist-cash">閒錢 ${cash.toLocaleString()}</span>
+        <span class="ark-bp-hist-cash">閒錢 ${cash.toLocaleString()}${group[0]?.calcCash ? `｜試算 ${Number(group[0].calcCash).toLocaleString()}` : ""}</span>
         <button class="ark-bp-hist-del" data-ark-bp-del-date="${escapeHtml(curDate)}" type="button">刪除</button>
       </div>
       ${dupCount ? `<p class="ark-bp-warn-note">⚠️ ${dupCount} 支同一天記了兩次以上：按其中一筆的 − 刪掉多的那筆</p>` : ""}
@@ -7729,10 +7740,10 @@ function renderArkBPHistoryTab() {
 function renderArkBPSymbolTrend(symRecords, curDate) {
   if (symRecords.length < 2) {
     const r = symRecords[0];
-    const norm = r ? arkBPNormalize(r.shares, r.idleCash) : 0;
+    const norm = r ? arkBPRecNorm(r) : 0;
     return `<div class="ark-bp-trend-box"><p class="muted-text">僅 1 筆紀錄（標準化 ${formatArkNorm(norm)}）</p></div>`;
   }
-  const points = symRecords.map((r) => ({ date: r.date, shares: r.shares, cash: r.idleCash, norm: arkBPNormalize(r.shares, r.idleCash) }));
+  const points = symRecords.map((r) => ({ date: r.date, shares: r.shares, cash: r.idleCash, calc: r.calcCash, norm: arkBPRecNorm(r) }));
   const vals = points.map((p) => p.norm);
   const sortedVals = [...vals].sort((a, b) => a - b);
   const med = sortedVals[Math.floor(sortedVals.length / 2)] || 0; // 同 arkBPClassifySignals 的中位數算法
@@ -7753,7 +7764,7 @@ function renderArkBPSymbolTrend(symRecords, curDate) {
   const dots = points.map((p, i) => {
     const isCur = p.date === curDate;
     const pct = med > 0 ? Math.round((p.norm / med - 1) * 100) : 0;
-    const tip = `${p.date}｜股數 ${formatNumber(p.shares, 4)}｜閒錢 ${Number(p.cash || 0).toLocaleString()}｜標準化 ${formatArkNorm(p.norm)}｜中位數 ${pct >= 0 ? "+" : ""}${pct}%`;
+    const tip = `${p.date}｜股數 ${formatNumber(p.shares, 4)}｜閒錢 ${Number(p.cash || 0).toLocaleString()}${p.calc ? `（試算 ${Number(p.calc).toLocaleString()}）` : ""}｜標準化 ${formatArkNorm(p.norm)}｜中位數 ${pct >= 0 ? "+" : ""}${pct}%`;
     const fill = p.norm > thr && thr > 0 ? "var(--amber)" : isCur ? "var(--accent, var(--blue))" : "var(--muted)";
     return `<circle cx="${xAt(i)}" cy="${yAt(p.norm)}" r="${isCur ? 4 : 2.5}" fill="${fill}" />
       <circle cx="${xAt(i)}" cy="${yAt(p.norm)}" r="9" fill="transparent" data-tooltip="${escapeHtml(tip)}" />`;
@@ -9115,6 +9126,9 @@ function renderCloudSnapshot() {
       renderCloudSnapshot();
     });
   });
+  els.cloudSnapshot.querySelector("#ark-bp-calc")?.addEventListener("input", (e) => {
+    state.arkBPCalcCash = e.target.value;
+  });
   els.cloudSnapshot.querySelector("#ark-bp-idle-10w")?.addEventListener("click", () => {
     state.arkBPIdleCash = "100000";
     const input = els.cloudSnapshot.querySelector("#ark-bp-idle");
@@ -9237,9 +9251,7 @@ function renderCloudSnapshot() {
   });
   els.cloudSnapshot.querySelector("[data-ark-bp-hist-cat-save]")?.addEventListener("click", async () => {
     try {
-      const rows = state.arkBPRecords.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date]);
-      await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
-      if (rows.length) await updateSheetValues(SHEET_NAMES.buyingPower, `A2:F${rows.length + 1}`, rows);
+      await writeBuyingPowerRecords(state.arkBPRecords);
       state.arkBPHistCatDirty = false;
       await loadBuyingPowerRecords();
     } catch (e) { alert("儲存失敗：" + (e.message || e)); }
