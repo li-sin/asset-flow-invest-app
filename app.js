@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.52.2";
+const APP_VERSION = "v0.52.3";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -94,7 +94,8 @@ const state = {
   batchFirstBuyMode: {},
   detailEditMode: {},
   arkBPSubTab: "record",
-  arkBTSel: { date: null, strategy: null }, // 回測曲線點選的日期／戰法（細節面板，v0.52.1）
+  arkBTSel: { date: null, strategy: null },
+  arkBPHistCatDirty: false, // 歷史紀錄改了分類、還沒寫回 Sheet // 回測曲線點選的日期／戰法（細節面板，v0.52.1）
   arkBTCloses: { TW: "idle", US: "idle" }, // 回測歷史收盤：idle/loading/done（各市場只抓一次）
   arkBPMarket: "TW",
   arkBPRecords: [],
@@ -7412,7 +7413,11 @@ function arkBTDetailHtml(results, dates, cur, mkt) {
   if (!sel.date || !dates.includes(sel.date)) return "";
   const btns = results.map(({ key, label, color }) =>
     `<button type="button" class="holdings-subtab${sel.strategy === key ? " is-active" : ""}" data-ark-bt-strategy="${key}"><span class="level-legend-dot" style="background:${color}"></span>${label}</button>`).join("");
-  const head = `<div class="ark-bt-detail-head"><b>${sel.date}</b><div class="holdings-subtabs">${btns}</div></div>`;
+  const rk = (state.arkRankRecords || []).filter((x) => x.market === mkt && x.date === sel.date).sort((a, b) => a.rank - b.rank);
+  const rankLine = mkt === "US"
+    ? `<p class="muted-text ark-bt-note">當天庫存位階最高：${rk.length ? rk.map((x) => `${x.rank}. ${escapeHtml(x.symbol)}`).join("　") : "未記錄"}</p>`
+    : "";
+  const head = `<div class="ark-bt-detail-head"><b>${sel.date}</b><div class="holdings-subtabs">${btns}</div></div>${rankLine}`;
   const res = results.find((x) => x.key === sel.strategy);
   if (!res) return `<div class="ark-bt-detail">${head}<p class="muted-text">選一個戰法看這天的持股與現金</p></div>`;
   const day = res.r.series.find((p) => p.date === sel.date);
@@ -7625,7 +7630,8 @@ function renderArkBPHistoryTab() {
     const hlClass = sig === "A" ? " is-highlight-a" : sig === "C" ? " is-highlight-c" : "";
     const sigHtml = sig ? `<span class="ark-bp-signal ark-bp-signal-${sig.toLowerCase()}">${sig}</span>` : "";
     const catLbl = { ETF: "ETF", IND: "產業", NON: "非" };
-    const catBadge = `<span class="ark-bp-cat-badge ark-bp-cat-${(r.cat || "ETF").toLowerCase()}">${catLbl[r.cat] || "ETF"}</span>`;
+    // 點標籤改分類（先改記憶體，按「儲存分類變更」才寫 Sheet；v0.52.3）
+    const catBadge = `<button type="button" class="ark-bp-cat-badge ark-bp-cat-${(r.cat || "ETF").toLowerCase()}" data-ark-bp-hist-cat="${escapeHtml(r.date)}|${escapeHtml(r.symbol)}">${catLbl[r.cat] || "ETF"}</button>`;
     const isExp = expanded === r.symbol;
     let trendHtml = "";
     if (isExp) {
@@ -7655,6 +7661,7 @@ function renderArkBPHistoryTab() {
         <span class="ark-bp-hist-cash">閒錢 ${cash.toLocaleString()}</span>
         <button class="ark-bp-hist-del" data-ark-bp-del-date="${escapeHtml(curDate)}" type="button">刪除</button>
       </div>
+      ${state.arkBPHistCatDirty ? `<div class="ark-bp-hist-dirty"><span>分類已修改（尚未儲存）</span><button class="button compact primary" type="button" data-ark-bp-hist-cat-save>儲存分類變更</button><button class="button compact ghost" type="button" data-ark-bp-hist-cat-cancel>取消</button></div>` : ""}
       <div class="ark-bp-header" style="grid-template-columns:24px 12px 1fr 56px 64px 60px auto 24px">
         <span></span><span></span><span>標的</span><span>分類</span><span style="text-align:right">股數</span><span style="text-align:right">標準化</span><span></span><span></span>
       </div>
@@ -9139,6 +9146,32 @@ function renderCloudSnapshot() {
       state.arkBPHistExpanded = null;
       renderCloudSnapshot();
     });
+  });
+  els.cloudSnapshot.querySelectorAll("[data-ark-bp-hist-cat]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation(); // 不觸發整列展開趨勢圖
+      const [date, sym] = btn.dataset.arkBpHistCat.split("|");
+      const rec = state.arkBPRecords.find((r) => r.date === date && r.symbol === sym);
+      if (!rec) return;
+      const isUS = marketForSymbol(sym) === "US";
+      const next = isUS ? { ETF: "IND", IND: "NON", NON: "IND" } : { ETF: "IND", IND: "NON", NON: "ETF" };
+      rec.cat = next[rec.cat || "ETF"] || (isUS ? "IND" : "ETF");
+      state.arkBPHistCatDirty = true;
+      renderCloudSnapshot();
+    });
+  });
+  els.cloudSnapshot.querySelector("[data-ark-bp-hist-cat-save]")?.addEventListener("click", async () => {
+    try {
+      const rows = state.arkBPRecords.map((r) => [r.date, r.idleCash, r.symbol, r.shares, r.cat || "ETF", r.updatedOn || r.date]);
+      await clearSheetValues(SHEET_NAMES.buyingPower, "A2:F");
+      if (rows.length) await updateSheetValues(SHEET_NAMES.buyingPower, `A2:F${rows.length + 1}`, rows);
+      state.arkBPHistCatDirty = false;
+      await loadBuyingPowerRecords();
+    } catch (e) { alert("儲存失敗：" + (e.message || e)); }
+  });
+  els.cloudSnapshot.querySelector("[data-ark-bp-hist-cat-cancel]")?.addEventListener("click", async () => {
+    state.arkBPHistCatDirty = false;
+    await loadBuyingPowerRecords(); // 從 Sheet 重讀，丟掉未儲存的修改
   });
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-hist-sym]").forEach((row) => {
     row.addEventListener("click", () => {
