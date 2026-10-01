@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.51.0";
+const APP_VERSION = "v0.51.1";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7146,9 +7146,13 @@ function arkBPDerivedTotalHtml(mkt) {
     const price = typeof q === "number" ? q : (q?.price ?? null);
     if (price > 0) held += Number(p.shares) * price; else missing++;
   }
+  // 方舟紀錄的閒錢一律填台幣（美股也是）→ 美股持股（美元報價）換台幣再相加，避免幣別混算（v0.51.1）
+  const rate = mkt === "US" ? getUsdTwdRate() : 1;
+  held *= rate;
   const total = (held + cash) / (level / 100);
   const snapDate = pos[0]?.date || "";
   const notes = [`持股 ${formatNumber(held, 0)}`, `水位 ${level}%`];
+  if (mkt === "US") notes.push(`匯率 ${rate.toFixed(2)}，約 US$${formatNumber(total / rate, 0)}`);
   if (snapDate && snapDate !== today()) notes.push(`快照 ${snapDate.slice(5)}`);
   if (missing) notes.push(`⚠️ ${missing} 支缺報價未計入`);
   return `<div class="ark-bp-derived">推算總資產 ≈ <b>${formatNumber(total, 0)}</b> <span class="muted-text">（${notes.join("，")}）對照方舟「現在持股＋資金總額」</span></div>`;
@@ -8905,7 +8909,7 @@ function renderCloudSnapshot() {
   });
   els.cloudSnapshot.querySelector("#ark-bp-save")?.addEventListener("click", () => saveArkBPRecords());
   els.cloudSnapshot.querySelector("#ark-bp-add-blank")?.addEventListener("click", () => {
-    state.arkBPRows.push({ symbol: "", shares: "", cat: (state.arkBPMarket || "TW") === "US" ? "IND" : "NON", isNew: true, _mkt: state.arkBPMarket || "TW" });
+    state.arkBPRows.push({ symbol: "", shares: "", cat: (state.arkBPMarket || "TW") === "US" ? "IND" : "ETF", isNew: true, _mkt: state.arkBPMarket || "TW" });
     renderCloudSnapshot();
     const lastInput = els.cloudSnapshot.querySelector(`.ark-bp-row:last-child .ark-bp-field`);
     if (lastInput) lastInput.focus();
@@ -8913,9 +8917,11 @@ function renderCloudSnapshot() {
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-cat]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const i = Number(btn.dataset.arkBpCat);
-      const catNext = { ETF: "IND", IND: "NON", NON: "ETF" };
+      // 美股沒有 ETF 價值區（Sin：美股只布局產業價值區）→ 只在產業／非價值區切換（v0.51.1）
+      const isUS = (state.arkBPMarket || "TW") === "US";
+      const catNext = isUS ? { ETF: "IND", IND: "NON", NON: "IND" } : { ETF: "IND", IND: "NON", NON: "ETF" };
       if (state.arkBPRows[i]) {
-        const newCat = catNext[state.arkBPRows[i].cat] || "ETF";
+        const newCat = catNext[state.arkBPRows[i].cat] || (isUS ? "IND" : "ETF");
         state.arkBPRows[i].cat = newCat;
         const catLabel = { ETF: "ETF", IND: "產業", NON: "非" };
         btn.className = `ark-bp-cat-badge ark-bp-cat-${newCat.toLowerCase()}`;
