@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.50.0";
+const APP_VERSION = "v0.50.1";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7161,9 +7161,16 @@ async function deleteArkBPDate(date, symbol = "") {
   }
 }
 
+// 計算不捨入：美股碎股（如 0.03 股）捨到小數 1 位會變 0，中位數／訊號也跟著失真（v0.50.1）
 function arkBPNormalize(shares, idleCash) {
   if (!idleCash || idleCash <= 0) return shares;
-  return Math.round(shares * (100000 / idleCash) * 10) / 10;
+  return shares * (100000 / idleCash);
+}
+// 標準化顯示：依量級決定小數位（≥10 → 1 位、≥1 → 2 位、<1 碎股 → 4 位）
+function formatArkNorm(v) {
+  const n = Number(v) || 0;
+  const a = Math.abs(n);
+  return formatNumber(n, a >= 10 ? 1 : a >= 1 ? 2 : 4);
 }
 
 function arkBPClassifySignals(records) {
@@ -7368,7 +7375,7 @@ function renderArkBPHistoryTab() {
         <div class="ark-bp-symbol">${escapeHtml(r.symbol)}</div>
         ${catBadge}
         <span class="shares-val">${formatNumber(r.shares, 4)}${r.idleCash && r.idleCash !== 100000 ? `<small>閒錢 ${formatNumber(r.idleCash / 10000, 1)} 萬</small>` : ""}</span>
-        <span class="norm-val">${norm.toFixed ? norm.toFixed(1) : norm}</span>
+        <span class="norm-val">${formatArkNorm(norm)}</span>
         ${sigHtml}
         <span class="ark-bp-hist-expand">${isExp ? "▴" : "▾"}</span>
       </div>
@@ -7398,7 +7405,7 @@ function renderArkBPSymbolTrend(symRecords, curDate) {
   if (symRecords.length < 2) {
     const r = symRecords[0];
     const norm = r ? arkBPNormalize(r.shares, r.idleCash) : 0;
-    return `<div class="ark-bp-trend-box"><p class="muted-text">僅 1 筆紀錄（標準化 ${norm.toFixed ? norm.toFixed(1) : norm}）</p></div>`;
+    return `<div class="ark-bp-trend-box"><p class="muted-text">僅 1 筆紀錄（標準化 ${formatArkNorm(norm)}）</p></div>`;
   }
   const points = symRecords.map((r) => ({ date: r.date, shares: r.shares, cash: r.idleCash, norm: arkBPNormalize(r.shares, r.idleCash) }));
   const vals = points.map((p) => p.norm);
@@ -7415,13 +7422,13 @@ function renderArkBPSymbolTrend(symRecords, curDate) {
   const polyPoints = points.map((p, i) => `${xAt(i)},${yAt(p.norm)}`).join(" ");
   const refLine = (v, label, cls) => v > 0
     ? `<line x1="${PL}" x2="${W - PR}" y1="${yAt(v)}" y2="${yAt(v)}" class="${cls}" />
-       <text x="${PL - 4}" y="${yAt(v) + 3}" text-anchor="end" font-size="8" fill="var(--muted)">${v.toFixed(0)}</text>
+       <text x="${PL - 4}" y="${yAt(v) + 3}" text-anchor="end" font-size="8" fill="var(--muted)">${formatArkNorm(v)}</text>
        <text x="${W - PR}" y="${yAt(v) - 2}" text-anchor="end" font-size="7" fill="var(--muted)">${label}</text>`
     : "";
   const dots = points.map((p, i) => {
     const isCur = p.date === curDate;
     const pct = med > 0 ? Math.round((p.norm / med - 1) * 100) : 0;
-    const tip = `${p.date}｜股數 ${formatNumber(p.shares, 4)}｜閒錢 ${Number(p.cash || 0).toLocaleString()}｜標準化 ${p.norm.toFixed(1)}｜中位數 ${pct >= 0 ? "+" : ""}${pct}%`;
+    const tip = `${p.date}｜股數 ${formatNumber(p.shares, 4)}｜閒錢 ${Number(p.cash || 0).toLocaleString()}｜標準化 ${formatArkNorm(p.norm)}｜中位數 ${pct >= 0 ? "+" : ""}${pct}%`;
     const fill = p.norm > thr && thr > 0 ? "var(--amber)" : isCur ? "var(--accent, var(--blue))" : "var(--muted)";
     return `<circle cx="${xAt(i)}" cy="${yAt(p.norm)}" r="${isCur ? 4 : 2.5}" fill="${fill}" />
       <circle cx="${xAt(i)}" cy="${yAt(p.norm)}" r="9" fill="transparent" data-tooltip="${escapeHtml(tip)}" />`;
@@ -7435,7 +7442,7 @@ function renderArkBPSymbolTrend(symRecords, curDate) {
     ${refLine(med, "中位數", "ark-bp-trend-med")}${refLine(thr, "A 門檻", "ark-bp-trend-thr")}
     <polyline points="${polyPoints}" fill="none" stroke="var(--accent, var(--blue))" stroke-width="1.5" />
     ${dots}${xLabels}
-  </svg>${flat ? `<p class="muted-text ark-bp-trend-note">期間內 ${points.length} 筆數值都一樣（${vals[0].toFixed(1)}），不是圖壞了</p>` : `<p class="muted-text ark-bp-trend-note">點圓點看當日數值</p>`}</div>`;
+  </svg>${flat ? `<p class="muted-text ark-bp-trend-note">期間內 ${points.length} 筆數值都一樣（${formatArkNorm(vals[0])}），不是圖壞了</p>` : `<p class="muted-text ark-bp-trend-note">點圓點看當日數值</p>`}</div>`;
 }
 
 function marketForSymbol(symbol) {
