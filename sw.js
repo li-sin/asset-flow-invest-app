@@ -1,4 +1,4 @@
-const CACHE_NAME = "assetflow-invest-v286";
+const CACHE_NAME = "assetflow-invest-v287";
 const ASSETS = [
   "./",
   "./index.html",
@@ -45,15 +45,17 @@ self.addEventListener("fetch", (event) => {
 async function networkFirst(request, bypassHttpCache) {
   const cache = await caches.open(CACHE_NAME);
   try {
+    // 殼層檔加時間參數：GitHub Pages CDN 也會快取 10 分鐘，no-store 只管得到瀏覽器快取（v0.52.8）
+    const bust = (u) => `${u}${u.includes("?") ? "&" : "?"}_=${Date.now()}`;
     const response = bypassHttpCache
-      ? await fetch(request.url, { cache: "no-store" })
+      ? await fetch(bust(request.url), { cache: "no-store" })
       : await fetch(request);
     if (response.ok) {
       cache.put(request, response.clone());
     }
     return response;
   } catch (error) {
-    const cached = await caches.match(request);
+    const cached = await caches.match(request) || await caches.match(request, { ignoreSearch: true });
     if (cached) return cached;
     throw error;
   }
