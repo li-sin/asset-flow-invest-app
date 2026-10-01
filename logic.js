@@ -221,6 +221,8 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
         .filter((o) => o.qty > 0);
       const need = orders.reduce((sm, o) => sm + o.qty * o.p, 0);
       let rankMissing = !(day.ranks || []).length, rankShort = false;
+      // 有記位階、但記的標的這個戰法都沒持有 → 當天賣不到（輪動快時常見，用來判斷要不要多記幾支，v0.53.2）
+      const rankNoneHeld = !rankMissing && ranks.length === 0;
       if (!rankMissing) sellOne();
       while (cash + 1e-9 < need) { if (!sellOne()) { rankShort = true; break; } }
       for (const o of orders) {
@@ -236,7 +238,7 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
         const price = px(symbol, day.date) || 0;
         return { symbol, shares: h.shares, avgCost: h.cost / h.shares, price, value: h.shares * price };
       }).sort((a, b) => b.value - a.value);
-      series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle, level: Number(day.level), positions, trades, rankMissing, rankShort });
+      series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle, level: Number(day.level), positions, trades, rankMissing, rankShort, rankNoneHeld });
       continue;
     }
     if (idle > 0) {
