@@ -4192,3 +4192,4 @@ button.ark-bp-cat-badge { border: 0; cursor: pointer; font: inherit; }
 .ark-bp-warn-note { font-size: var(--fs-caption); color: var(--amber); margin: 4px 0; }
 .ark-bt-summary .ark-bt-over { color: var(--amber); }
 .ark-rank-pick select { max-width: 92px; }
+.ark-bp-hist-row input.ark-bp-hist-shares { width: 100%; box-sizing: border-box; text-align: right; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font-size: var(--fs-caption); }

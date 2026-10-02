@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.53.2";
+const APP_VERSION = "v0.53.3";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -95,7 +95,8 @@ const state = {
   detailEditMode: {},
   arkBPSubTab: "record",
   arkBTSel: { date: null, strategy: null },
-  arkBPHistCatDirty: false, // 歷史紀錄改了分類、還沒寫回 Sheet // 回測曲線點選的日期／戰法（細節面板，v0.52.1）
+  arkBPHistCatDirty: false, // 歷史紀錄改了分類／股數／位階、還沒寫回 Sheet
+  arkBPHistRankDrafts: {}, // 歷史紀錄改過的位階：{ date: { 1: sym, … } } // 回測曲線點選的日期／戰法（細節面板，v0.52.1）
   arkBTCloses: { TW: "idle", US: "idle" }, // 回測歷史收盤：idle/loading/done（各市場只抓一次）
   arkBPMarket: "TW",
   arkBPRecords: [],
@@ -7544,6 +7545,23 @@ function arkBPStatusHtml(r, todayStr) {
 }
 
 // 今日記錄（美股）：庫存中位階最高 2 支（戰法回測：100 美元／1 股每天賣位階最高，v0.51.0）
+// 單一名次的位階下拉（今日記錄、歷史紀錄共用；attr 決定由哪個 handler 接）
+function arkRankSelectHtml(rank, cur, held, seenSyms, attr, stale = false) {
+  const heldSet = new Set(held);
+  const opt = (x) => `<option value="${escapeHtml(x)}"${x === cur ? " selected" : ""}>${escapeHtml(x)}</option>`;
+  const extra = cur && !heldSet.has(cur) && !seenSyms.includes(cur) ? opt(cur) : "";
+  return `<label class="ark-rank-pick">${rank}<select ${attr}="${rank}"${stale ? ' class="is-stale"' : ""}><option value="">${rank <= 2 ? "—" : "選填"}</option>${extra}<optgroup label="目前庫存">${held.map(opt).join("")}</optgroup>${seenSyms.length ? `<optgroup label="已不在庫存">${seenSyms.map(opt).join("")}</optgroup>` : ""}</select></label>`;
+}
+function arkRankSymbolLists(positions) {
+  const held = [...new Set((positions || []).filter((p) => marketForSymbol(p.symbol) === "US" && Number(p.shares) > 0).map((p) => p.symbol))].sort();
+  const heldSet = new Set(held);
+  const seenSyms = [...new Set([
+    ...state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === "US").map((r) => r.symbol),
+    ...(state.arkRankRecords || []).filter((r) => r.market === "US").map((r) => r.symbol),
+  ].map((x) => String(x).toUpperCase()))].filter((x) => !heldSet.has(x)).sort();
+  return { held, seenSyms };
+}
+
 function arkRankPickerHtml(positions, todayStr) {
   // 選項＝目前庫存＋曾在方舟紀錄／位階紀錄出現過的美股：回測持股會留著 Sin 已賣掉的標的，位階要能記到它們（v0.53.2）
   const held = [...new Set((positions || []).filter((p) => marketForSymbol(p.symbol) === "US" && Number(p.shares) > 0).map((p) => p.symbol))].sort();
@@ -7553,12 +7571,7 @@ function arkRankPickerHtml(positions, todayStr) {
     ...(state.arkRankRecords || []).filter((r) => r.market === "US").map((r) => r.symbol),
   ].map((x) => String(x).toUpperCase()))].filter((x) => !heldSet.has(x)).sort();
   const stale = !state.arkRankTouched && state.arkRankSelDate && state.arkRankSelDate !== todayStr;
-  const opt = (s, cur) => `<option value="${escapeHtml(s)}"${s === cur ? " selected" : ""}>${escapeHtml(s)}</option>`;
-  const sel = (rank) => {
-    const cur = state.arkRankSel[rank] || "";
-    const extra = cur && !heldSet.has(cur) && !seenSyms.includes(cur) ? opt(cur, cur) : "";
-    return `<label class="ark-rank-pick">${rank}<select data-ark-rank="${rank}"${stale ? ' class="is-stale"' : ""}><option value="">${rank <= 2 ? "—" : "選填"}</option>${extra}<optgroup label="目前庫存">${held.map((x) => opt(x, cur)).join("")}</optgroup>${seenSyms.length ? `<optgroup label="已不在庫存">${seenSyms.map((x) => opt(x, cur)).join("")}</optgroup>` : ""}</select></label>`;
-  };
+  const sel = (rank) => arkRankSelectHtml(rank, state.arkRankSel[rank] || "", held, seenSyms, "data-ark-rank", stale);
   const any = [1, 2, 3, 4, 5].some((k) => state.arkRankSel[k]);
   const status = stale ? `<span class="ark-bp-status is-stale">上次 ${escapeHtml(state.arkRankSelDate.slice(5))}</span>` : (state.arkRankTouched || state.arkRankSelDate === todayStr) && any ? `<span class="ark-bp-status is-updated">✓</span>` : "";
   return `<div class="ark-rank-row"><span class="ark-rank-title">位階最高（1–2 必填）</span>${[1, 2, 3, 4, 5].map(sel).join("")}${status}</div>`;
@@ -7718,7 +7731,7 @@ function renderArkBPHistoryTab() {
         <span class="list-dot ${dotClass}"></span>
         <div class="ark-bp-symbol">${escapeHtml(r.symbol)}${notLaidOut(r) ? `<small class="ark-bp-warn">⚠️ 價值區未布局</small>` : ""}${laidButNon(r) ? `<small class="ark-bp-warn">⚠️ 有布局但標非價值區</small>` : ""}${symCount.get(r.symbol) > 1 ? `<small class="ark-bp-warn">⚠️ 重複記錄</small>` : ""}</div>
         ${catBadge}
-        <span class="shares-val">${formatNumber(r.shares, 4)}</span>
+        <input class="shares-val ark-bp-hist-shares" type="number" step="any" inputmode="decimal" data-ark-bp-hist-shares="${recIdx}" value="${escapeHtml(String(r.shares))}">
         <span class="norm-val">${formatArkNorm(norm)}</span>
         ${sigHtml}
         <span class="ark-bp-hist-expand">${isExp ? "▴" : "▾"}</span>
@@ -7740,7 +7753,14 @@ function renderArkBPHistoryTab() {
         ? [group.filter(notLaidOut).length ? `<p class="ark-bp-warn-note">⚠️ ${group.filter(notLaidOut).length} 支標成價值區但當天沒布局：標籤設錯或布局錯檔？</p>` : "",
            group.filter(laidButNon).length ? `<p class="ark-bp-warn-note">⚠️ ${group.filter(laidButNon).length} 支當天有布局但標非價值區：標籤設錯？</p>` : ""].join("")
         : `<p class="muted-text ark-bp-warn-note">當天沒有美股快照，無法比對是否布局</p>`) : ""}
-      ${state.arkBPHistCatDirty ? `<div class="ark-bp-hist-dirty"><span>分類已修改（尚未儲存）</span><button class="button compact primary" type="button" data-ark-bp-hist-cat-save>儲存分類變更</button><button class="button compact ghost" type="button" data-ark-bp-hist-cat-cancel>取消</button></div>` : ""}
+      ${mkt === "US" ? (() => {
+        // 當天位階最高（可改，v0.53.3）：草稿存 state.arkBPHistRankDrafts[date]，按「儲存變更」才寫 Sheet
+        const draft = state.arkBPHistRankDrafts[curDate] || Object.fromEntries((state.arkRankRecords || [])
+          .filter((x) => x.market === "US" && x.date === curDate).map((x) => [x.rank, x.symbol]));
+        const { held, seenSyms } = arkRankSymbolLists(_arkBPLastPositions);
+        return `<div class="ark-rank-row"><span class="ark-rank-title">當天位階最高</span>${[1, 2, 3, 4, 5].map((k) => arkRankSelectHtml(k, draft[k] || "", held, seenSyms, "data-ark-hist-rank")).join("")}</div>`;
+      })() : ""}
+      ${state.arkBPHistCatDirty ? `<div class="ark-bp-hist-dirty"><span>有修改尚未儲存</span><button class="button compact primary" type="button" data-ark-bp-hist-cat-save>儲存變更</button><button class="button compact ghost" type="button" data-ark-bp-hist-cat-cancel>取消</button></div>` : ""}
       <div class="ark-bp-header" style="grid-template-columns:24px 12px 1fr 56px 64px 60px auto 24px">
         <span></span><span></span><span>標的</span><span>分類</span><span style="text-align:right">股數</span><span style="text-align:right">標準化</span><span></span><span></span>
       </div>
@@ -9265,15 +9285,49 @@ function renderCloudSnapshot() {
       renderCloudSnapshot();
     });
   });
+  els.cloudSnapshot.querySelectorAll("[data-ark-bp-hist-shares]").forEach((input) => {
+    input.addEventListener("click", (e) => e.stopPropagation()); // 不觸發整列展開
+    input.addEventListener("change", () => {
+      const rec = state.arkBPRecords[Number(input.dataset.arkBpHistShares)];
+      const v = Number(input.value);
+      if (!rec || !Number.isFinite(v) || v < 0) { input.value = rec ? rec.shares : ""; return; }
+      rec.shares = v;
+      state.arkBPHistCatDirty = true;
+      renderCloudSnapshot();
+    });
+  });
+  els.cloudSnapshot.querySelectorAll("[data-ark-hist-rank]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const date = state.arkBPHistDate;
+      const cur = state.arkBPHistRankDrafts[date] || Object.fromEntries((state.arkRankRecords || [])
+        .filter((x) => x.market === "US" && x.date === date).map((x) => [x.rank, x.symbol]));
+      cur[sel.dataset.arkHistRank] = sel.value;
+      state.arkBPHistRankDrafts[date] = cur;
+      state.arkBPHistCatDirty = true;
+      renderCloudSnapshot();
+    });
+  });
   els.cloudSnapshot.querySelector("[data-ark-bp-hist-cat-save]")?.addEventListener("click", async () => {
     try {
       await writeBuyingPowerRecords(state.arkBPRecords);
+      const drafts = state.arkBPHistRankDrafts;
+      if (Object.keys(drafts).length) {
+        const kept = (state.arkRankRecords || []).filter((x) => !(x.market === "US" && drafts[x.date]));
+        const add = Object.entries(drafts).flatMap(([date, sel]) => {
+          const seen = new Set();
+          return [1, 2, 3, 4, 5].filter((k) => sel[k] && !seen.has(sel[k]) && seen.add(sel[k]))
+            .map((k) => ({ date, market: "US", rank: k, symbol: sel[k] }));
+        });
+        await writeArkRankRecords([...kept, ...add]);
+      }
+      state.arkBPHistRankDrafts = {};
       state.arkBPHistCatDirty = false;
       await loadBuyingPowerRecords();
     } catch (e) { alert("儲存失敗：" + (e.message || e)); }
   });
   els.cloudSnapshot.querySelector("[data-ark-bp-hist-cat-cancel]")?.addEventListener("click", async () => {
     state.arkBPHistCatDirty = false;
+    state.arkBPHistRankDrafts = {};
     await loadBuyingPowerRecords(); // 從 Sheet 重讀，丟掉未儲存的修改
   });
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-hist-sym]").forEach((row) => {
