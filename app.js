@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.53.5";
+const APP_VERSION = "v0.53.6";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7634,11 +7634,10 @@ function renderArkBPRecordTab(positions) {
   }
   visibleIndices.sort((a, b) =>
     (catOrder[allRows[a].cat] || 0) - (catOrder[allRows[b].cat] || 0)
-    || (!allRows[a].symbol) - (!allRows[b].symbol)
+    || (!allRows[b].symbol) - (!allRows[a].symbol)
     || String(allRows[a].symbol).localeCompare(String(allRows[b].symbol), undefined, { numeric: true }));
 
-  // 空白列（還沒填代號）放最上面、不分組，配合上方「＋ 空白列」不用捲到最後（v0.53.4）
-  visibleIndices.sort((a, b) => (!!allRows[a].symbol) - (!!allRows[b].symbol));
+  // 空白列（還沒填代號）排在所屬分類標題正下方（台股 ETF、美股產業），配合上方「＋ 空白列」不用捲到最後（v0.53.6）
   let lastCatGroup = "";
   const rowsHtml = visibleIndices.map((i) => {
     const r = allRows[i];
@@ -7651,7 +7650,7 @@ function renderArkBPRecordTab(positions) {
     const badgeHtml = `<button class="ark-bp-cat-badge ark-bp-cat-${cat.toLowerCase()}" data-ark-bp-cat="${i}" type="button">${catLabel[cat] || cat}</button>`;
     const status = arkBPRowStatus(r, today);
     let groupHeader = "";
-    if (r.symbol && cat !== lastCatGroup) {
+    if (cat !== lastCatGroup) {
       lastCatGroup = cat;
       groupHeader = `<div class="ark-bp-cat-header">${catLabel[cat] || cat}</div>`;
     }
