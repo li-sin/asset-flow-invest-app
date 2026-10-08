@@ -3839,10 +3839,19 @@ textarea {
   background: var(--accent, var(--blue));
   color: #fff;
 }
+.ark-bp-date-input {
+  margin-left: auto;
+  padding: 4px 6px;
+  font-size: var(--fs-caption);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  color: var(--text);
+  color-scheme: light dark;
+}
 .ark-bp-date-label {
   font-size: var(--fs-caption);
   color: var(--muted);
-  margin-left: auto;
 }
 
 .ark-bp-cash-hint {
@@ -3971,6 +3980,10 @@ textarea {
   background: var(--accent, var(--blue));
   color: #fff;
   border-style: solid;
+}
+
+.ark-bp-add-top {
+  margin: var(--sp-2) 0;
 }
 
 .ark-bp-save-row {

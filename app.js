@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.53.3";
+const APP_VERSION = "v0.53.5";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -95,6 +95,7 @@ const state = {
   detailEditMode: {},
   arkBPSubTab: "record",
   arkBTSel: { date: null, strategy: null },
+  arkBTSort: null, // 回測當天持股表排序 { key, dir }；null＝代號 A→Z
   arkBPHistCatDirty: false, // 歷史紀錄改了分類／股數／位階、還沒寫回 Sheet
   arkBPHistRankDrafts: {}, // 歷史紀錄改過的位階：{ date: { 1: sym, … } } // 回測曲線點選的日期／戰法（細節面板，v0.52.1）
   arkBTCloses: { TW: "idle", US: "idle" }, // 回測歷史收盤：idle/loading/done（各市場只抓一次）
@@ -7130,13 +7131,19 @@ async function loadArkRankRecords() {
     state.arkRankRecords = rows.slice(1)
       .filter((r) => r[0] && r[3])
       .map((r) => ({ date: normalizeDateText(r[0]), market: normalizeMarketKey(r[1]), rank: Number(r[2]) || 0, symbol: String(r[3]).toUpperCase().trim() }));
-    const us = state.arkRankRecords.filter((r) => r.market === "US");
-    const lastDate = us.map((r) => r.date).sort().pop() || "";
-    state.arkRankSel = { 1: "", 2: "", 3: "", 4: "", 5: "" };
-    us.filter((r) => r.date === lastDate).forEach((r) => { if (r.rank >= 1 && r.rank <= 5) state.arkRankSel[r.rank] = r.symbol; });
-    state.arkRankSelDate = lastDate;
-    state.arkRankTouched = false;
+    arkRankPrefill();
   } catch (e) { console.warn("loadArkRankRecords", e); }
+}
+
+// 帶入位階：補記以前的日子時（arkBPDate）只看那天以前（含）最近一次的位階（v0.53.5）
+function arkRankPrefill() {
+  const asOf = state.arkBPDate || "";
+  const us = (state.arkRankRecords || []).filter((r) => r.market === "US" && (!asOf || r.date <= asOf));
+  const lastDate = us.map((r) => r.date).sort().pop() || "";
+  state.arkRankSel = { 1: "", 2: "", 3: "", 4: "", 5: "" };
+  us.filter((r) => r.date === lastDate).forEach((r) => { if (r.rank >= 1 && r.rank <= 5) state.arkRankSel[r.rank] = r.symbol; });
+  state.arkRankSelDate = lastDate;
+  state.arkRankTouched = false;
 }
 
 // 推算總資產（戰法回測計畫）：閒錢＝建議布局金額＝水位×總資產−持股 → 總資產＝(持股＋閒錢)÷水位
@@ -7145,6 +7152,7 @@ let _arkBPLastPositions = [];
 function arkBPDerivedTotalHtml(mkt) {
   const cash = Number(state.arkBPIdleCash);
   if (!cash || cash <= 0) return "";
+  if (state.arkBPDate && state.arkBPDate !== today()) return `<div class="ark-bp-derived muted-text">補記以前的日子不推算總資產（持股與報價都是現在的）</div>`;
   if (cash === 100000) return `<div class="ark-bp-derived muted-text">閒錢＝10 萬基準，無法推算總資產（要推算請填方舟的實際建議布局金額）</div>`;
   const level = targetLevelFromHistory(mkt);
   if (!level) return `<div class="ark-bp-derived muted-text">缺${mkt === "US" ? "美股" : "台股"}水位，無法推算總資產</div>`;
@@ -7168,9 +7176,11 @@ function arkBPDerivedTotalHtml(mkt) {
   return `<div class="ark-bp-derived">推算總資產 ≈ <b>${formatNumber(total, 0)}</b> <span class="muted-text">（${notes.join("，")}）對照方舟「現在持股＋資金總額」</span></div>`;
 }
 
+// 補記以前的日子（arkBPDate 有值）：只用那天以前（含）的紀錄帶入，那天已有紀錄就帶那天的（v0.53.5）
 function arkBPPrefillFromLast() {
-  const records = state.arkBPRecords;
-  if (!records.length) return;
+  const asOf = state.arkBPDate || "";
+  const records = state.arkBPRecords.filter((r) => !asOf || r.date <= asOf);
+  if (!records.length) { state.arkBPRows = []; return; }
   const dates = [...new Set(records.map((r) => r.date))].sort();
   const lastDate = dates[dates.length - 1];
   const lastRow = records.find((r) => r.date === lastDate);
@@ -7194,6 +7204,9 @@ async function saveArkBPRecords() {
   // 價值區應為 10 檔（台股只布局 ETF 價值區）：超過就請 Sin 確認，避免回測多買（v0.52.0）
   const etfCount = mkt === "TW" ? validRows.filter((r) => (r.cat || "ETF") === "ETF").length : 0;
   if (mkt === "US" && (!state.arkRankSel[1] || !state.arkRankSel[2]) && !confirm("位階最高 1、2 還沒填（回測 1 股／100 美元要用），確定先儲存？")) return;
+  const saveDate = state.arkBPDate || today();
+  if (saveDate !== today() && state.arkBPRecords.some((r) => r.date === saveDate && marketForSymbol(r.symbol) === mkt)
+    && !confirm(`${saveDate} 已有${mkt === "TW" ? "台股" : "美股"}紀錄，確定要用現在的內容覆蓋？`)) return;
   if (etfCount > 10 && !confirm(`ETF 價值區有 ${etfCount} 檔（超過 10 檔），確定要這樣儲存？`)) return;
   state.arkBPSaving = true;
   renderCloudSnapshot();
@@ -7488,11 +7501,25 @@ function arkBTDetailHtml(results, dates, cur, mkt) {
   const rows = [
     ...(day.positions || []).map((p) => {
       const ret = p.avgCost > 0 ? p.price / p.avgCost - 1 : 0;
-      return { sym: p.symbol, html: `<tr><td>${escapeHtml(p.symbol)}${tag(p.symbol)}</td><td>${formatNumber(p.shares, sd)}</td><td>${formatNumber(p.avgCost, 2)}</td><td>${formatNumber(p.price, 2)}</td><td>${formatNumber(p.value, 0)}</td>${retCell(ret)}</tr>` };
+      return { sym: p.symbol, shares: p.shares, avgCost: p.avgCost, price: p.price, value: p.value, ret, html: `<tr><td>${escapeHtml(p.symbol)}${tag(p.symbol)}</td><td>${formatNumber(p.shares, sd)}</td><td>${formatNumber(p.avgCost, 2)}</td><td>${formatNumber(p.price, 2)}</td><td>${formatNumber(p.value, 0)}</td>${retCell(ret)}</tr>` };
     }),
     ...(day.trades || []).filter((t) => t.type === "sell" && !held.has(t.symbol)).map((t) =>
-      ({ sym: t.symbol, html: `<tr class="is-soldout"><td>${escapeHtml(t.symbol)}${tag(t.symbol)}</td><td>0</td><td>—</td><td>${formatNumber(t.price, 2)}</td><td>0</td>${retCell(t.ret)}</tr>` })),
-  ].sort((a, b) => String(a.sym).localeCompare(String(b.sym), undefined, { numeric: true })).map((r) => r.html).join("");
+      ({ sym: t.symbol, shares: 0, avgCost: null, price: t.price, value: 0, ret: t.ret, html: `<tr class="is-soldout"><td>${escapeHtml(t.symbol)}${tag(t.symbol)}</td><td>0</td><td>—</td><td>${formatNumber(t.price, 2)}</td><td>0</td>${retCell(t.ret)}</tr>` })),
+  ];
+  // 點欄頭排序：代號 A→Z 起手、數字欄大到小起手，第三下回預設（代號 A→Z）；沒有值（整筆賣出的均價）一律排最後
+  const bySym = (a, b) => String(a.sym).localeCompare(String(b.sym), undefined, { numeric: true });
+  const sort = state.arkBTSort;
+  rows.sort((a, b) => {
+    if (!sort || sort.key === "sym") return (sort?.dir === "desc" ? -1 : 1) * bySym(a, b);
+    const va = a[sort.key], vb = b[sort.key];
+    if (va == null || vb == null) return (va == null) - (vb == null) || bySym(a, b);
+    return (sort.dir === "asc" ? va - vb : vb - va) || bySym(a, b);
+  });
+  const th = (key, label) => {
+    const arrow = sort?.key === key ? (sort.dir === "asc" ? " ▲" : " ▼") : "";
+    return `<th class="sortable-th" data-ark-bt-sort="${key}">${label}${arrow}</th>`;
+  };
+  const rowsHtml = rows.map((r) => r.html).join("");
   return `<div class="ark-bt-detail">${head}
     <div class="ark-bt-summary">
       <span>總值 <b>${cur}${formatNumber(day.value, 0)}</b></span>
@@ -7502,7 +7529,7 @@ function arkBTDetailHtml(results, dates, cur, mkt) {
       ${res.usOnly && day.idle < 0 ? `<span class="ark-bt-over">超出建議持股 ${cur}${formatNumber(-day.idle, 0)}</span>` : ""}
     </div>
     ${(day.trades || []).length ? "" : `<p class="muted-text ark-bt-note">當天沒有交易</p>`}
-    ${rows ? `<table class="ark-bt-table ark-bt-pos"><thead><tr><th>代號</th><th>股數</th><th>均價</th><th>收盤</th><th>市值</th><th>報酬</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="muted-text ark-bt-note">收盤後沒有持股</p>`}
+    ${rowsHtml ? `<table class="ark-bt-table ark-bt-pos"><thead><tr>${th("sym", "代號")}${th("shares", "股數")}${th("avgCost", "均價")}${th("price", "收盤")}${th("value", "市值")}${th("ret", "報酬")}</tr></thead><tbody>${rowsHtml}</tbody></table>` : `<p class="muted-text ark-bt-note">收盤後沒有持股</p>`}
   </div>`;
 }
 
@@ -7610,6 +7637,8 @@ function renderArkBPRecordTab(positions) {
     || (!allRows[a].symbol) - (!allRows[b].symbol)
     || String(allRows[a].symbol).localeCompare(String(allRows[b].symbol), undefined, { numeric: true }));
 
+  // 空白列（還沒填代號）放最上面、不分組，配合上方「＋ 空白列」不用捲到最後（v0.53.4）
+  visibleIndices.sort((a, b) => (!!allRows[a].symbol) - (!!allRows[b].symbol));
   let lastCatGroup = "";
   const rowsHtml = visibleIndices.map((i) => {
     const r = allRows[i];
@@ -7622,7 +7651,7 @@ function renderArkBPRecordTab(positions) {
     const badgeHtml = `<button class="ark-bp-cat-badge ark-bp-cat-${cat.toLowerCase()}" data-ark-bp-cat="${i}" type="button">${catLabel[cat] || cat}</button>`;
     const status = arkBPRowStatus(r, today);
     let groupHeader = "";
-    if (cat !== lastCatGroup) {
+    if (r.symbol && cat !== lastCatGroup) {
       lastCatGroup = cat;
       groupHeader = `<div class="ark-bp-cat-header">${catLabel[cat] || cat}</div>`;
     }
@@ -7642,13 +7671,15 @@ function renderArkBPRecordTab(positions) {
   });
 
   const alreadyRecordedToday = state.arkBPRecords.some((r) => r.date === today && marketForSymbol(r.symbol) === mkt);
+  const isPast = today !== window.today();
 
   return `
     <section class="dashboard-card">
       <div class="ark-bp-idle-row">
         <label>閒錢</label>
         <input class="ark-bp-idle-input" type="number" inputmode="numeric" id="ark-bp-idle" value="${escapeHtml(state.arkBPIdleCash)}" placeholder="100000">
-        <span class="ark-bp-date-label">${escapeHtml(today)}${alreadyRecordedToday ? " (已有紀錄)" : ""}</span>
+        <input class="ark-bp-date-input" type="date" id="ark-bp-date" value="${escapeHtml(today)}" max="${escapeHtml(window.today())}" title="要補記以前的日子就改這裡">
+        <span class="ark-bp-date-label">${alreadyRecordedToday ? "(已有紀錄)" : ""}${isPast ? ' <button class="ark-bp-idle-preset" type="button" id="ark-bp-date-today">回今天</button>' : ""}</span>
       </div>
       <div class="ark-bp-idle-row ark-bp-calc-row">
         <label>試算閒錢</label>
@@ -7657,12 +7688,12 @@ function renderArkBPRecordTab(positions) {
       </div>
       <div id="ark-bp-derived-slot">${arkBPDerivedTotalHtml(mkt)}</div>
       ${mkt === "US" ? arkRankPickerHtml(positions, today) : ""}
+      <button class="button ghost ark-bp-add-top" type="button" id="ark-bp-add-blank">＋ 空白列</button>
       <div class="ark-bp-header">
         <span></span><span></span><span>標的</span><span style="text-align:right">股數</span><span>分類</span>
       </div>
       ${hasVisibleRows ? rowsHtml : '<p class="muted-text" style="padding:8px 0">尚無' + (mkt === "TW" ? "台股" : "美股") + '標的</p>'}
       <div class="ark-bp-save-row">
-        <button class="button ghost" type="button" id="ark-bp-add-blank">＋ 空白列</button>
         <button class="button primary" type="button" id="ark-bp-save" ${state.arkBPSaving ? "disabled" : ""}>${state.arkBPSaving ? "儲存中…" : "儲存"}</button>
       </div>
     </section>
@@ -9136,6 +9167,17 @@ function renderCloudSnapshot() {
       renderCloudSnapshot();
     });
   });
+  els.cloudSnapshot.querySelectorAll("[data-ark-bt-sort]").forEach((th) => {
+    th.style.cursor = "pointer";
+    th.addEventListener("click", () => {
+      const key = th.dataset.arkBtSort;
+      const startDir = key === "sym" ? "asc" : "desc";
+      const cur = state.arkBTSort;
+      if (cur && cur.key === key) state.arkBTSort = cur.dir === startDir ? { key, dir: startDir === "asc" ? "desc" : "asc" } : null;
+      else state.arkBTSort = { key, dir: startDir };
+      renderCloudSnapshot();
+    });
+  });
   els.cloudSnapshot.querySelectorAll("[data-ark-bt-strategy]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.arkBTSel.strategy = btn.dataset.arkBtStrategy;
@@ -9232,11 +9274,19 @@ function renderCloudSnapshot() {
     });
   });
   els.cloudSnapshot.querySelector("#ark-bp-save")?.addEventListener("click", () => saveArkBPRecords());
+  // 補記以前的日子：換日期就重新帶入那天以前（含）最近的紀錄與位階（v0.53.5）
+  const setArkBPDate = (d) => {
+    state.arkBPDate = d && d < today() ? d : "";
+    arkBPPrefillFromLast();
+    arkRankPrefill();
+    renderCloudSnapshot();
+  };
+  els.cloudSnapshot.querySelector("#ark-bp-date")?.addEventListener("change", (e) => setArkBPDate(e.target.value));
+  els.cloudSnapshot.querySelector("#ark-bp-date-today")?.addEventListener("click", () => setArkBPDate(""));
   els.cloudSnapshot.querySelector("#ark-bp-add-blank")?.addEventListener("click", () => {
     state.arkBPRows.push({ symbol: "", shares: "", cat: (state.arkBPMarket || "TW") === "US" ? "IND" : "ETF", isNew: true, _mkt: state.arkBPMarket || "TW" });
     renderCloudSnapshot();
-    const lastInput = els.cloudSnapshot.querySelector(`.ark-bp-row:last-child .ark-bp-field`);
-    if (lastInput) lastInput.focus();
+    els.cloudSnapshot.querySelector(`[data-ark-bp-field="symbol"][data-ark-bp-i="${state.arkBPRows.length - 1}"]`)?.focus();
   });
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-cat]").forEach((btn) => {
     btn.addEventListener("click", () => {
