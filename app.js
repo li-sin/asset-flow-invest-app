@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.53.6";
+const APP_VERSION = "v0.53.7";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -5104,7 +5104,8 @@ async function fetchHistoricalCloses(snapshots, positions, retryCount = 0) {
   for (let i = 0; i < formatted.length; i += BATCH_SIZE) batches.push(formatted.slice(i, i + BATCH_SIZE));
   try {
     let anySuccess = false;
-    for (const batch of batches) {
+    // 各批同時送出，等待時間≈最慢的一批（原本一批抓完才送下一批，回測也得排在後面等，v0.53.7）
+    await Promise.all(batches.map(async (batch) => {
       const params = new URLSearchParams({
         mode: "history",
         symbols: batch.join(","),
@@ -5119,7 +5120,7 @@ async function fetchHistoricalCloses(snapshots, positions, retryCount = 0) {
         mergeHistoricalCloses(history);
         anySuccess = true;
       }
-    }
+    }));
     state.historicalCloseLoading = false;
     if (anySuccess) renderCloudSnapshot();
     else if (retryCount < 1) setTimeout(() => fetchHistoricalCloses(snapshots, positions, retryCount + 1), 3000);
