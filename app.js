@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.53.12";
+const APP_VERSION = "v0.53.13";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7581,10 +7581,13 @@ function renderArkBuyingPower(positions) {
   `;
 }
 
-function arkBPStatusHtml(r, todayStr) {
+function arkBPStatusHtml(r, todayStr, i) {
   const st = arkBPRowStatus(r, todayStr);
   if (!st) return "";
-  return `<span class="ark-bp-status ${st.stale ? "is-stale" : "is-updated"}">${escapeHtml(st.label)}</span>`;
+  // 今日記錄（有 i）：點「上次 M/D」＝今天股數一樣、也算更新；點 ✓ 可取消（只限股數沒改的列，v0.53.13）
+  if (i == null) return `<span class="ark-bp-status ${st.stale ? "is-stale" : "is-updated"}">${escapeHtml(st.label)}</span>`;
+  const tip = st.stale ? "點一下＝今天股數一樣，標成已更新" : "點一下取消（股數沒改的話）";
+  return `<button type="button" tabindex="-1" class="ark-bp-status ark-bp-status-btn ${st.stale ? "is-stale" : "is-updated"}" data-ark-bp-confirm="${i}" title="${tip}">${escapeHtml(st.label)}</button>`;
 }
 
 // 今日記錄（美股）：庫存中位階最高 2 支（戰法回測：100 美元／1 股每天賣位階最高，v0.51.0）
@@ -7661,7 +7664,7 @@ function renderArkBPRecordTab(positions) {
     const dotClass = mkt === "US" ? "list-dot-US" : "list-dot-TW";
     const name = SYMBOL_NAMES[r.symbol] || "";
     const symbolHtml = r.symbol
-      ? `<div class="ark-bp-symbol"><button class="ark-bp-symbol-edit" type="button" data-ark-bp-rename="${i}" title="點一下修改代號">${escapeHtml(r.symbol)}</button><span class="ark-bp-symbol-name">${escapeHtml(name)}</span>${arkBPStatusHtml(r, today)}</div>`
+      ? `<div class="ark-bp-symbol"><button class="ark-bp-symbol-edit" type="button" tabindex="-1" data-ark-bp-rename="${i}" title="點一下修改代號">${escapeHtml(r.symbol)}</button><span class="ark-bp-symbol-name">${escapeHtml(name)}</span>${arkBPStatusHtml(r, today, i)}</div>`
       : `<input class="ark-bp-field ark-bp-symbol-input" type="text" data-ark-bp-field="symbol" data-ark-bp-i="${i}" value="" placeholder="標的代號">`;
     const badgeHtml = `<button class="ark-bp-cat-badge ark-bp-cat-${cat.toLowerCase()}" data-ark-bp-cat="${i}" type="button">${catLabel[cat] || cat}</button>`;
     const status = arkBPRowStatus(r, today);
@@ -7761,7 +7764,7 @@ function renderArkBPHistoryTab() {
     const dotClass = marketForSymbol(r.symbol) === "US" ? "list-dot-US" : "list-dot-TW";
     const hlClass = sig === "A" ? " is-highlight-a" : sig === "C" ? " is-highlight-c" : "";
     const sigTip = sig ? arkBPSignalTip(sig, norm, info.median, info.water) : "";
-    const sigHtml = sig ? `<span class="ark-bp-signal ark-bp-signal-${sig.toLowerCase()}" data-ark-sig-tip="${escapeHtml(sigTip)}" title="${escapeHtml(sigTip)}">${sig}</span>` : "<span></span>";
+    const sigHtml = sig ? `<span class="ark-bp-signal ark-bp-signal-${sig.toLowerCase()}" data-ark-sig-tip="${escapeHtml(sigTip)}">${sig}</span>` : "<span></span>";
     const catLbl = { ETF: "ETF", IND: "產業", NON: "非" };
     // 點標籤改分類（先改記憶體，按「儲存分類變更」才寫 Sheet；v0.52.3）
     const recIdx = allRecords.indexOf(r);
@@ -9239,7 +9242,7 @@ function renderCloudSnapshot() {
       const todayStr = state.arkBPDate || today();
       input.classList.toggle("is-stale", !!arkBPRowStatus(state.arkBPRows[i], todayStr)?.stale);
       const old = input.closest(".ark-bp-row")?.querySelector(".ark-bp-status");
-      if (old) old.outerHTML = arkBPStatusHtml(state.arkBPRows[i], todayStr);
+      if (old) old.outerHTML = arkBPStatusHtml(state.arkBPRows[i], todayStr, i);
     });
   });
   // 防呆：代號打完（change＝離開欄位）若與其他列重複 → 不留第二列；有填股數就更新原本那列並提醒（v0.52.5）
@@ -9280,6 +9283,25 @@ function renderCloudSnapshot() {
     // 只選取，不再「點進就算更新」：Tab 快速跳過會誤標 ✓，改成股數真的有變才 ✓（v0.53.10，推翻 session 51）
     input.addEventListener("focus", () => input.select());
   });
+  // 「上次 M/D」⇄ ✓ 手動切換：用委派（狀態元素打字時會被 outerHTML 換掉，個別綁會失效），容器只綁一次
+  if (!els.cloudSnapshot._arkConfirmBound) {
+    els.cloudSnapshot._arkConfirmBound = true;
+    els.cloudSnapshot.addEventListener("click", (e) => {
+      const btn = e.target.closest?.("[data-ark-bp-confirm]");
+      if (!btn) return;
+      const i = Number(btn.dataset.arkBpConfirm);
+      const row = state.arkBPRows[i];
+      if (!row) return;
+      const todayStr = state.arkBPDate || today();
+      const st = arkBPRowStatus(row, todayStr);
+      if (st?.stale) row.touched = true;
+      else if (row.touched && !arkBPShareChanged(row)) row.touched = false;
+      else return;
+      const input = btn.closest(".ark-bp-row")?.querySelector('[data-ark-bp-field="shares"]');
+      input?.classList.toggle("is-stale", !!arkBPRowStatus(row, todayStr)?.stale);
+      btn.outerHTML = arkBPStatusHtml(row, todayStr, i);
+    });
+  }
   // 代號打錯可改：點代號 → 輸入新代號（v0.53.10）
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-rename]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -9377,23 +9399,40 @@ function renderCloudSnapshot() {
       renderCloudSnapshot();
     });
   });
-  // 訊號標籤點一下跳說明框（手機沒有 hover；再點一次或點別處關掉）
+  // 訊號說明框：電腦 hover 顯示、手機點標籤開關；寬螢幕放標籤右邊空白處不蓋住資料，放不下（手機）才放下方（v0.53.13）
+  const showSigPop = (tag) => {
+    document.querySelector(".ark-sig-pop")?.remove();
+    const pop = document.createElement("div");
+    pop.className = "ark-sig-pop";
+    pop.textContent = tag.dataset.arkSigTip;
+    pop._anchor = tag;
+    document.body.appendChild(pop);
+    const r = tag.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    const w = pop.offsetWidth, h = pop.offsetHeight;
+    // 右側要跳過整列的 ▾ 展開欄，從列的右緣開始放
+    const rowRight = (tag.closest(".ark-bp-hist-row") || tag).getBoundingClientRect().right;
+    if (vw - rowRight >= w + 20) {
+      pop.style.left = `${window.scrollX + rowRight + 12}px`;
+      pop.style.top = `${window.scrollY + Math.max(8, r.top + r.height / 2 - h / 2)}px`;
+    } else {
+      pop.style.left = `${Math.max(8, Math.min(window.scrollX + r.right - w, window.scrollX + vw - w - 8))}px`;
+      pop.style.top = `${window.scrollY + r.bottom + 6}px`;
+    }
+    return pop;
+  };
+  const canHover = window.matchMedia("(hover: hover)").matches;
   els.cloudSnapshot.querySelectorAll("[data-ark-sig-tip]").forEach((tag) => {
+    if (canHover) {
+      tag.addEventListener("mouseenter", () => showSigPop(tag));
+      tag.addEventListener("mouseleave", () => document.querySelector(".ark-sig-pop")?.remove());
+    }
     tag.addEventListener("click", (e) => {
       e.stopPropagation(); // 不觸發整列展開趨勢圖
+      if (canHover) return; // 電腦 hover 已顯示
       const open = document.querySelector(".ark-sig-pop");
-      const same = open && open._anchor === tag;
-      open?.remove();
-      if (same) return;
-      const pop = document.createElement("div");
-      pop.className = "ark-sig-pop";
-      pop.textContent = tag.dataset.arkSigTip;
-      pop._anchor = tag;
-      document.body.appendChild(pop);
-      const r = tag.getBoundingClientRect();
-      const w = pop.offsetWidth;
-      pop.style.left = `${Math.max(8, Math.min(window.scrollX + r.right - w, window.scrollX + document.documentElement.clientWidth - w - 8))}px`;
-      pop.style.top = `${window.scrollY + r.bottom + 6}px`;
+      if (open && open._anchor === tag) { open.remove(); return; }
+      const pop = showSigPop(tag);
       setTimeout(() => document.addEventListener("click", () => pop.remove(), { once: true }), 0);
     });
   });
