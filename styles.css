@@ -4083,26 +4083,51 @@ textarea {
   padding: 0 4px;
 }
 
-.ark-bp-hist-header,
-.ark-bp-hist-row {
+/* 方舟「紀錄」頁（v0.54.0 今日＋歷史合併）：同一份 DOM，靠 grid-area 切版
+   手機：− 代號 股數 M/D 分類 訊號 ▾（標準化收進 ▾ 展開）
+   寬螢幕：〔− 股數 狀態 分類〕〔標的〕〔標準化 訊號 ▾〕 */
+.ark-rec-header,
+.ark-bp-row.ark-rec-row {
   display: grid;
-  grid-template-columns: 24px 12px 1fr 56px 64px 60px 24px 24px;
-  max-width: 480px; /* 同今日記錄：寬螢幕別讓代號和股數隔太遠（v0.53.11） */
-  gap: 6px;
+  grid-template-columns: 22px minmax(0, 1fr) 52px 36px 40px 22px 16px;
+  grid-template-areas: "rm sym sh st cat sig exp";
+  gap: 5px;
   align-items: center;
-  padding: 6px 0;
-  font-size: var(--fs-small);
-  border-bottom: 1px solid rgba(58, 58, 60, 0.15);
-  cursor: pointer;
+  max-width: none;
 }
-.ark-bp-hist-row .norm-val {
-  text-align: right;
-  font-weight: 600;
-}
-.ark-bp-hist-expand {
-  text-align: center;
-  font-size: var(--fs-caption);
-  color: var(--muted);
+.ark-rec-header { padding: 4px 0; font-size: var(--fs-caption); color: var(--muted); border-bottom: 1px solid var(--line); }
+.ark-rec-header .ar-sh, .ark-rec-header .ar-norm { text-align: right; }
+.ar-rm { grid-area: rm; }
+.ar-sym { grid-area: sym; min-width: 0; }
+.ar-sh { grid-area: sh; }
+.ar-st { grid-area: st; text-align: center; min-width: 0; }
+.ar-cat { grid-area: cat; }
+.ar-norm { grid-area: norm; display: none; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ar-sig { grid-area: sig; text-align: center; }
+.ar-exp { grid-area: exp; padding: 0; border: 0; background: none; color: var(--muted); font-size: var(--fs-caption); cursor: pointer; }
+.ar-st .ark-bp-status { margin-left: 0; }
+.ar-st-pre { display: none; }
+.ar-norm.is-prev, .ark-bp-signal.is-prev { opacity: 0.45; }
+.ark-rec-row .ark-bp-symbol-edit { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ark-rec-warn { flex-shrink: 0; color: var(--amber); cursor: pointer; font-size: var(--fs-caption); }
+.ark-rec-expand { padding: 4px 0 0 28px; border-bottom: 1px solid rgba(58, 58, 60, 0.15); }
+.ark-rec-expand-norm { font-size: var(--fs-caption); color: var(--muted); }
+.ark-rec-expand .ark-bp-trend-box { border-bottom: 0; }
+.ark-rec-nav { flex-wrap: wrap; }
+.ark-rec-nav .ark-bp-date-input { margin-left: 0; width: auto; flex: 0 0 auto; }
+.ark-rec-nav .ark-bp-hist-del { margin-left: auto; }
+@media (min-width: 700px) {
+  .ark-rec-header,
+  .ark-bp-row.ark-rec-row {
+    grid-template-columns: 24px 72px 76px 48px minmax(120px, 1fr) 56px 26px 20px;
+    grid-template-areas: "rm sh st cat sym norm sig exp";
+    gap: 8px;
+    max-width: 640px;
+  }
+  .ar-norm { display: block; }
+  .ar-st-pre { display: inline; }
+  .ark-rec-expand { max-width: 640px; padding-left: 0; }
+  .ark-rec-expand-norm { display: none; }
 }
 .ark-bp-trend-box {
   position: relative; /* chart-tooltip 定位基準 */
@@ -4118,8 +4143,6 @@ textarea {
 .ark-bp-trend-med { stroke: var(--muted); stroke-width: 0.8; stroke-dasharray: 3 3; }
 .ark-bp-trend-thr { stroke: var(--amber); stroke-width: 0.8; stroke-dasharray: 3 3; opacity: 0.8; }
 .ark-bp-trend-note { font-size: var(--fs-caption); margin: 2px 0 0; }
-.ark-bp-hist-row .shares-val { text-align: right; font-variant-numeric: tabular-nums; }
-.ark-bp-hist-row .shares-val small { display: block; font-size: 10px; color: var(--muted); }
 
 .ark-bp-norm-header {
   font-size: var(--fs-caption);
@@ -4240,10 +4263,8 @@ textarea {
 .ark-bt-delta.is-buy { color: var(--red); }
 .ark-bt-delta.is-sell { color: var(--green); }
 .ark-bt-table tr.is-soldout td { color: var(--muted); }
-.ark-bp-hist-dirty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; font-size: var(--fs-caption); color: var(--amber); }
 button.ark-bp-cat-badge { border: 0; cursor: pointer; font: inherit; }
 .ark-bp-symbol .ark-bp-warn { display: block; font-size: 10px; color: var(--amber); font-weight: 500; }
 .ark-bp-warn-note { font-size: var(--fs-caption); color: var(--amber); margin: 4px 0; }
 .ark-bt-summary .ark-bt-over { color: var(--amber); }
 .ark-rank-pick select { max-width: 92px; }
-.ark-bp-hist-row input.ark-bp-hist-shares { width: 100%; box-sizing: border-box; text-align: right; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font-size: var(--fs-caption); }
