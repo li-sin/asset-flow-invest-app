@@ -111,7 +111,7 @@ export function arkBPShareChanged(row) {
   return Number(row.shares || 0) !== Number(row.srcShares || 0);
 }
 
-// 點進股數欄位（touched）就算更新，值沒變也算——代表「這支我看過了」
+// 股數有變才算更新；touched 只剩「重複代號合併股數」時明確標記（v0.53.10 起點進欄位不再算）
 export function arkBPRowUpdated(row) {
   return !!row.touched || arkBPShareChanged(row);
 }

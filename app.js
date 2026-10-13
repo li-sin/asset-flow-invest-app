@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.53.9";
+const APP_VERSION = "v0.53.10";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7646,7 +7646,7 @@ function renderArkBPRecordTab(positions) {
     const dotClass = mkt === "US" ? "list-dot-US" : "list-dot-TW";
     const name = SYMBOL_NAMES[r.symbol] || "";
     const symbolHtml = r.symbol
-      ? `<div class="ark-bp-symbol"><span>${escapeHtml(r.symbol)}</span><span class="ark-bp-symbol-name">${escapeHtml(name)}</span>${arkBPStatusHtml(r, today)}</div>`
+      ? `<div class="ark-bp-symbol"><button class="ark-bp-symbol-edit" type="button" data-ark-bp-rename="${i}" title="點一下修改代號">${escapeHtml(r.symbol)}</button><span class="ark-bp-symbol-name">${escapeHtml(name)}</span>${arkBPStatusHtml(r, today)}</div>`
       : `<input class="ark-bp-field ark-bp-symbol-input" type="text" data-ark-bp-field="symbol" data-ark-bp-i="${i}" value="" placeholder="標的代號">`;
     const badgeHtml = `<button class="ark-bp-cat-badge ark-bp-cat-${cat.toLowerCase()}" data-ark-bp-cat="${i}" type="button">${catLabel[cat] || cat}</button>`;
     const status = arkBPRowStatus(r, today);
@@ -9261,16 +9261,31 @@ function renderCloudSnapshot() {
         next.select();
       }
     });
-    input.addEventListener("focus", () => {
-      input.select();
-      const i = Number(input.dataset.arkBpI);
+    // 只選取，不再「點進就算更新」：Tab 快速跳過會誤標 ✓，改成股數真的有變才 ✓（v0.53.10，推翻 session 51）
+    input.addEventListener("focus", () => input.select());
+  });
+  // 代號打錯可改：點代號 → 輸入新代號（v0.53.10）
+  els.cloudSnapshot.querySelectorAll("[data-ark-bp-rename]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.arkBpRename);
       const row = state.arkBPRows[i];
-      if (input.dataset.arkBpField !== "shares" || !row || row.touched) return;
-      row.touched = true;
-      const todayStr = state.arkBPDate || today();
-      input.classList.toggle("is-stale", !!arkBPRowStatus(row, todayStr)?.stale);
-      const old = input.closest(".ark-bp-row")?.querySelector(".ark-bp-status");
-      if (old) old.outerHTML = arkBPStatusHtml(row, todayStr);
+      if (!row) return;
+      const input = prompt("修改代號", row.symbol);
+      if (input === null) return;
+      const sym = String(input).toUpperCase().trim();
+      if (!sym || sym === row.symbol) return;
+      const mkt = state.arkBPMarket || "TW";
+      if (marketForSymbol(sym) !== mkt) {
+        alert(`${sym} 不是${mkt === "US" ? "美股" : "台股"}代號，請到另一個市場分頁新增`);
+        return;
+      }
+      if (state.arkBPRows.some((r, k) => k !== i && String(r.symbol || "").toUpperCase().trim() === sym)) {
+        alert(`${sym} 已在列表中，請直接改原本那列的股數，打錯的這列可按左邊 − 移除`);
+        return;
+      }
+      state.arkBPDismissed.add(row.symbol); // 打錯的代號若剛好在庫存，別被自動帶回來
+      row.symbol = sym;
+      renderCloudSnapshot();
     });
   });
   els.cloudSnapshot.querySelector("#ark-bp-save")?.addEventListener("click", () => saveArkBPRecords());

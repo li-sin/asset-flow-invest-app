@@ -3891,6 +3891,20 @@ textarea {
   border-bottom: 1px solid var(--line);
 }
 
+/* 寬螢幕（電腦／iPad）限寬：代號和股數別隔太遠，免得對錯行（v0.53.10） */
+.ark-bp-header,
+.ark-bp-row { max-width: 420px; }
+.ark-bp-symbol-edit {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted var(--muted);
+  text-underline-offset: 3px;
+}
+
 .ark-bp-row {
   display: grid;
   grid-template-columns: 24px 12px 1fr 72px 56px;
