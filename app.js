@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.53.8";
+const APP_VERSION = "v0.53.9";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -3331,7 +3331,7 @@ async function getGoogleAccessToken() {
         reject(error);
       }
     };
-    googleTokenClient.requestAccessToken({ prompt: googleAccessToken ? "" : "consent" });
+    googleTokenClient.requestAccessToken(); // 不傳 prompt：只有首次授權問權限，之後免再同意（原 "consent" 會每次都問，v0.53.9）
   });
 }
 
