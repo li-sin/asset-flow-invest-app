@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.54.2";
+const APP_VERSION = "v0.54.4";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7721,7 +7721,7 @@ function renderArkBPRecordTab(positions) {
         <input class="ark-bp-field ar-sh${arkBPRowStatus(r, curDate)?.stale ? " is-stale" : ""}" type="number" ${mkt === "US" ? 'inputmode="decimal" step="any"' : 'inputmode="numeric"'} data-ark-bp-field="shares" data-ark-bp-i="${i}" value="${escapeHtml(r.shares)}" placeholder="股數">
         <span class="ar-st">${arkBPStatusHtml(r, curDate, i)}</span>
         <button class="ark-bp-cat-badge ar-cat ark-bp-cat-${cat.toLowerCase()}" data-ark-bp-cat="${i}" type="button">${catLabel[cat] || cat}</button>
-        ${isSpark && r.symbol ? `<span class="ar-spark">${arkRecSparkHtml(mRecords.filter((x) => x.symbol === r.symbol).sort((a, b) => a.date.localeCompare(b.date)), curDate)}</span>` : ""}
+        ${isSpark && r.symbol ? `<span class="ar-spark">${arkRecSparkHtml(mRecords.filter((x) => x.symbol === r.symbol).sort((a, b) => a.date.localeCompare(b.date)), curDate, signals)}</span>` : ""}
         <span class="norm-val ar-norm${isPrev ? " is-prev" : ""}" title="${isPrev ? `上次 ${saved.date} 的標準化` : ""}">${norm == null ? "" : formatArkNorm(norm)}</span>
         <span class="ar-sig">${sigHtml}</span>
         ${r.symbol ? `<button class="ar-exp" type="button" tabindex="-1" data-ark-rec-exp="${escapeHtml(r.symbol)}" title="趨勢圖">${isExp ? "▴" : "▾"}</button>` : "<span></span>"}
@@ -7772,7 +7772,7 @@ function renderArkBPRecordTab(positions) {
         </span>
       </div>
       <div class="ark-rec-header">
-        <span class="ar-rm"></span><span class="ar-sym">標的</span>${isSpark ? '<span class="ar-spark">趨勢（虛線＝中位數、橘點＝偏高）</span>' : ""}<span class="ar-sh">股數</span><span class="ar-st"></span><span class="ar-cat">分類</span><span class="ar-norm">標準化</span><span class="ar-sig"></span><span class="ar-exp"></span>
+        <span class="ar-rm"></span><span class="ar-sym">標的</span>${isSpark ? '<span class="ar-spark" title="虛線＝中位數、橘點＝股數偏高（超過中位數×1.5）、藍點＝選的這天；點圓點看數值">趨勢 ⓘ</span>' : ""}<span class="ar-sh">股數</span><span class="ar-st"></span><span class="ar-cat">分類</span><span class="ar-norm">標準化</span><span class="ar-sig"></span><span class="ar-exp"></span>
       </div>
       ${visibleIndices.length ? rowsHtml : '<p class="muted-text" style="padding:8px 0">尚無' + (mkt === "TW" ? "台股" : "美股") + '標的</p>'}
       <div class="ark-bp-save-row">
@@ -7785,7 +7785,7 @@ function renderArkBPRecordTab(positions) {
 // 紀錄頁小趨勢圖（v0.54.1，寬螢幕中間空白處）：縱軸用這支自己的最低～最高讓波動看得出來
 // （只看形狀，不能跨標的比大小；完整圖 ▾ 仍從 0 起）。超過門檻（中位數×1.5）的點標橘＝訊號的股數偏高
 // SVG 會被拉寬（preserveAspectRatio=none），點用零長度線＋non-scaling-stroke 畫才不會變橢圓
-function arkRecSparkHtml(symRecords, curDate) {
+function arkRecSparkHtml(symRecords, curDate, signals) {
   const pts = symRecords.filter((r) => r.date <= curDate).slice(-30);
   if (pts.length < 2) return `<span class="ar-spark-empty">${pts.length ? "僅 1 筆" : ""}</span>`;
   const vals = pts.map((r) => arkBPRecNorm(r));
@@ -7795,15 +7795,27 @@ function arkRecSparkHtml(symRecords, curDate) {
   let lo = sorted[0], hi = sorted[sorted.length - 1];
   if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
   const pad = (hi - lo) * 0.12;
-  const W = 260, H = 52;
+  const W = 160, H = 52; // 接近實際欄寬，拉伸少、線條比例正確
   const x = (i) => 4 + (i * (W - 8)) / (pts.length - 1);
   const y = (v) => H - 4 - ((v - (lo - pad)) / (hi - lo + 2 * pad)) * (H - 8);
   const medLine = med > lo - pad && med < hi + pad ? `<line x1="0" x2="${W}" y1="${y(med)}" y2="${y(med)}" class="ark-bp-trend-med" vector-effect="non-scaling-stroke" />` : "";
+  // 每個點都可點（v0.54.4）：小灰點＋透明大觸控區，說明框顯示日期、股數、閒錢、標準化、相對中位數、當天訊號
   const dots = vals.map((v, i) => {
+    const p = pts[i];
     const hot = thr > 0 && v > thr;
-    const isCur = pts[i].date === curDate;
-    if (!hot && !isCur) return "";
-    return `<line x1="${x(i)}" x2="${x(i)}" y1="${y(v)}" y2="${y(v)}" stroke="${hot ? "var(--amber)" : "var(--accent, var(--blue))"}" stroke-width="${isCur ? 7 : 5}" stroke-linecap="round" vector-effect="non-scaling-stroke"><title>${escapeHtml(`${pts[i].date} 標準化 ${formatArkNorm(v)}`)}</title></line>`;
+    const isCur = p.date === curDate;
+    const color = hot ? "var(--amber)" : isCur ? "var(--accent, var(--blue))" : "var(--muted)";
+    const pct = med > 0 ? Math.round((v / med - 1) * 100) : 0;
+    const sig = signals?.get(`${p.date}_${p.symbol}`)?.signal || "";
+    const tip = [
+      `${p.date}${isCur ? "（選的這天）" : ""}`,
+      `股數 ${formatNumber(p.shares, 4)}｜閒錢 ${Number(p.idleCash || 0).toLocaleString()}${p.calcCash && p.calcCash !== p.idleCash ? `\n（試算 ${Number(p.calcCash).toLocaleString()}）` : ""}`,
+      `標準化 ${formatArkNorm(v)}｜中位數 ${pct >= 0 ? "+" : ""}${pct}%`,
+      hot ? `股數偏高（超過 ${formatArkNorm(thr)}）` : "",
+      sig ? `當天訊號 ${sig}` : "",
+    ].filter(Boolean).join("\n");
+    return `<line x1="${x(i)}" x2="${x(i)}" y1="${y(v)}" y2="${y(v)}" stroke="${color}" stroke-width="${isCur ? 7 : hot ? 5 : 3}" stroke-linecap="round" vector-effect="non-scaling-stroke" />
+      <circle class="ar-spark-hit" cx="${x(i)}" cy="${y(v)}" r="8" fill="transparent" data-ark-sig-tip="${escapeHtml(tip)}" />`;
   }).join("");
   const line = `<polyline points="${vals.map((v, i) => `${x(i)},${y(v)}`).join(" ")}" fill="none" stroke="var(--accent, var(--blue))" stroke-width="1.6" vector-effect="non-scaling-stroke" />`;
   return `<span class="ar-spark-lbl is-hi">${formatArkNorm(sorted[sorted.length - 1])}</span><span class="ar-spark-lbl is-lo">${formatArkNorm(sorted[0])}</span><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="ar-spark-svg">${medLine}${line}${dots}</svg>`;
@@ -9401,17 +9413,26 @@ function renderCloudSnapshot() {
     pop.textContent = tag.dataset.arkSigTip;
     pop._anchor = tag;
     document.body.appendChild(pop);
+    // 全部用畫面座標算，最後換成 CSS 座標：根元素有 zoom（例 0.9）時 absolute 的 left/top 會被縮放，
+    // 直接用 getBoundingClientRect 的值會偏掉（說明框跑到上面蓋住別列，v0.54.4 修）
+    pop.style.left = "0px";
+    pop.style.top = "0px";
+    const origin = pop.getBoundingClientRect();
+    const z = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+    const place = (vx, vy) => {
+      pop.style.left = `${(vx - origin.left) / z}px`;
+      pop.style.top = `${(vy - origin.top) / z}px`;
+    };
     const r = tag.getBoundingClientRect();
-    const vw = document.documentElement.clientWidth;
-    const w = pop.offsetWidth, h = pop.offsetHeight;
-    // 右側要跳過整列的 ▾ 展開欄，從列的右緣開始放
+    const vw = window.innerWidth;
+    const w = origin.width, h = origin.height;
+    // 右側要跳過整列的 ▾ 展開欄，從列的右緣開始放；小圖的點放在點的正下方
     const rowRight = (tag.closest(".ark-bp-row") || tag).getBoundingClientRect().right;
-    if (vw - rowRight >= w + 20) {
-      pop.style.left = `${window.scrollX + rowRight + 12}px`;
-      pop.style.top = `${window.scrollY + Math.max(8, r.top + r.height / 2 - h / 2)}px`;
+    if (!tag.closest(".ar-spark") && vw - rowRight >= w + 20) {
+      place(rowRight + 12, Math.max(8, r.top + r.height / 2 - h / 2));
     } else {
-      pop.style.left = `${Math.max(8, Math.min(window.scrollX + r.right - w, window.scrollX + vw - w - 8))}px`;
-      pop.style.top = `${window.scrollY + r.bottom + 6}px`;
+      const anchorRight = tag.closest(".ar-spark") ? r.left + r.width / 2 + w / 2 : r.right;
+      place(Math.max(8, Math.min(anchorRight - w, vw - w - 8)), r.bottom + 6);
     }
     return pop;
   };

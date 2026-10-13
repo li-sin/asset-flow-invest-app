@@ -4124,6 +4124,7 @@ textarea {
 .ar-spark-lbl { position: absolute; left: 0; font-size: 10px; line-height: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ar-spark-lbl.is-hi { top: 2px; }
 .ar-spark-lbl.is-lo { bottom: 2px; }
+.ar-spark-hit { cursor: pointer; pointer-events: all; }
 .ar-spark-empty { font-size: var(--fs-caption); color: var(--muted); }
 .ark-rec-nav { flex-wrap: wrap; }
 .ark-rec-nav .ark-bp-date-input { margin-left: 0; width: auto; flex: 0 0 auto; }
@@ -4142,11 +4143,12 @@ textarea {
   /* 小趨勢圖開啟：標的欄縮窄、中間給趨勢圖，列約 56px 高（v0.54.1） */
   .is-spark .ark-rec-header,
   .is-spark .ark-bp-row.ark-rec-row {
-    grid-template-columns: 24px 72px 76px 48px minmax(90px, 130px) minmax(160px, 1fr) 56px 26px 20px;
+    /* 小圖欄限 120–170px：太寬會把每支都拉成平緩上升，看不出波動（v0.54.3） */
+    grid-template-columns: 24px 72px 76px 48px minmax(90px, 130px) minmax(120px, 170px) 56px 26px 20px;
     grid-template-areas: "rm sh st cat sym spark norm sig exp";
-    max-width: 900px;
+    max-width: 760px;
   }
-  .is-spark .ark-rec-expand { max-width: 900px; }
+  .is-spark .ark-rec-expand { max-width: 760px; }
   .ark-rec-spark-btn { display: inline-flex; }
   .is-spark .ar-spark { display: block; }
   .ark-rec-expand-norm { display: none; }
