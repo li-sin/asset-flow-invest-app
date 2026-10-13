@@ -4113,7 +4113,10 @@ textarea {
 .ark-rec-expand { padding: 4px 0 0 28px; border-bottom: 1px solid rgba(58, 58, 60, 0.15); }
 .ark-rec-expand-norm { font-size: var(--fs-caption); color: var(--muted); }
 .ark-rec-expand .ark-bp-trend-box { border-bottom: 0; }
-.ark-rec-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.ark-rec-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ark-rec-trend-modes { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.ark-rec-trend-title { font-size: var(--fs-caption); color: var(--muted); }
+.ark-rec-row[data-ark-rec-sym] { cursor: pointer; }
 .ark-rec-spark-btn { display: none; } /* 手機沒空間，只在寬螢幕出現 */
 .ar-spark { grid-area: spark; position: relative; display: none; min-width: 0; padding-left: 26px; }
 .ark-rec-header .ar-spark { padding-left: 0; }

@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.54.1";
+const APP_VERSION = "v0.54.2";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -100,8 +100,10 @@ const state = {
   arkBTCloses: { TW: "idle", US: "idle" }, // 回測歷史收盤：idle/loading/done（各市場只抓一次）
   arkBPMarket: "TW",
   arkBPRecords: [],
-  arkBPHistExpanded: null, // 紀錄頁展開趨勢圖的代號
-  arkRecSpark: false, // 紀錄頁寬螢幕中間的小趨勢圖；每次開 App 都關（Sin：記錄時要一次看到全部標的，v0.54.1）
+  // 紀錄頁趨勢圖模式（v0.54.2）："off"＝全部收合、"spark"＝中間小圖（寬螢幕）、"all"＝全部展開；每次開 App 都 off（Sin：記錄時要一次看到全部標的）
+  arkRecTrendMode: "off",
+  // 個別點列切換的代號：off／spark 模式＝展開的那些，all 模式＝被收起來的那些（例外清單）
+  arkRecExpanded: new Set(),
   arkBPLoading: false,
   arkBPSaving: false,
   arkBPIdleCash: "",
@@ -7675,7 +7677,8 @@ function renderArkBPRecordTab(positions) {
     .map((l) => String(l.symbol).toUpperCase()));
   const notLaidOut = (r) => usSnap && r.symbol && r.cat === "IND" && !laidOut.has(String(r.symbol).toUpperCase());
   const laidButNon = (r) => usSnap && r.symbol && r.cat === "NON" && laidOut.has(String(r.symbol).toUpperCase());
-  const expanded = state.arkBPHistExpanded;
+  const trendMode = state.arkRecTrendMode;
+  const isSpark = trendMode === "spark";
 
   let lastCatGroup = "";
   const rowsHtml = visibleIndices.map((i) => {
@@ -7700,7 +7703,7 @@ function renderArkBPRecordTab(positions) {
       ? `<span class="ark-bp-signal ark-bp-signal-${sig.toLowerCase()}${isPrev ? " is-prev" : ""}" data-ark-sig-tip="${escapeHtml((isPrev ? `${saved.date} 的訊號\n` : "") + arkBPSignalTip(sig, norm, info.median, info.water))}">${sig}</span>`
       : "";
     const hlClass = !isPrev && sig === "A" ? " is-highlight-a" : !isPrev && sig === "C" ? " is-highlight-c" : "";
-    const isExp = r.symbol && expanded === r.symbol;
+    const isExp = !!r.symbol && (trendMode === "all") !== state.arkRecExpanded.has(r.symbol);
     let expandHtml = "";
     if (isExp) {
       const symRecords = mRecords.filter((x) => x.symbol === r.symbol).sort((a, b) => a.date.localeCompare(b.date));
@@ -7712,13 +7715,13 @@ function renderArkBPRecordTab(positions) {
       groupHeader = `<div class="ark-bp-cat-header">${groupLabel[cat] || cat}</div>`;
     }
     return `${groupHeader}
-      <div class="ark-bp-row ark-rec-row${hlClass}" data-ark-bp-idx="${i}">
+      <div class="ark-bp-row ark-rec-row${hlClass}" data-ark-bp-idx="${i}"${r.symbol ? ` data-ark-rec-sym="${escapeHtml(r.symbol)}"` : ""}>
         <button class="ark-bp-remove-btn ar-rm" data-ark-bp-remove="${i}" type="button" title="移除這一列（按儲存後生效）">−</button>
         <div class="ark-bp-symbol ar-sym">${symbolHtml}</div>
         <input class="ark-bp-field ar-sh${arkBPRowStatus(r, curDate)?.stale ? " is-stale" : ""}" type="number" ${mkt === "US" ? 'inputmode="decimal" step="any"' : 'inputmode="numeric"'} data-ark-bp-field="shares" data-ark-bp-i="${i}" value="${escapeHtml(r.shares)}" placeholder="股數">
         <span class="ar-st">${arkBPStatusHtml(r, curDate, i)}</span>
         <button class="ark-bp-cat-badge ar-cat ark-bp-cat-${cat.toLowerCase()}" data-ark-bp-cat="${i}" type="button">${catLabel[cat] || cat}</button>
-        ${state.arkRecSpark && r.symbol ? `<span class="ar-spark">${arkRecSparkHtml(mRecords.filter((x) => x.symbol === r.symbol).sort((a, b) => a.date.localeCompare(b.date)), curDate)}</span>` : ""}
+        ${isSpark && r.symbol ? `<span class="ar-spark">${arkRecSparkHtml(mRecords.filter((x) => x.symbol === r.symbol).sort((a, b) => a.date.localeCompare(b.date)), curDate)}</span>` : ""}
         <span class="norm-val ar-norm${isPrev ? " is-prev" : ""}" title="${isPrev ? `上次 ${saved.date} 的標準化` : ""}">${norm == null ? "" : formatArkNorm(norm)}</span>
         <span class="ar-sig">${sigHtml}</span>
         ${r.symbol ? `<button class="ar-exp" type="button" tabindex="-1" data-ark-rec-exp="${escapeHtml(r.symbol)}" title="趨勢圖">${isExp ? "▴" : "▾"}</button>` : "<span></span>"}
@@ -7737,7 +7740,7 @@ function renderArkBPRecordTab(positions) {
     : (isRecorded ? `<p class="muted-text ark-bp-warn-note">當天沒有美股快照，無法比對是否布局</p>` : "")) : "";
 
   return `
-    <section class="dashboard-card${state.arkRecSpark ? " is-spark" : ""}">
+    <section class="dashboard-card${isSpark ? " is-spark" : ""}">
       <div class="ark-bp-hist-nav ark-rec-nav">
         <button class="ark-bp-hist-nav-btn" data-ark-rec-go="${escapeHtml(prevDate)}" type="button" ${prevDate ? "" : "disabled"} title="上一個有紀錄的日子">◂</button>
         <input class="ark-bp-date-input" type="date" id="ark-bp-date" value="${escapeHtml(curDate)}" max="${escapeHtml(todayStr)}" title="選要看／要記的日子">
@@ -7761,10 +7764,15 @@ function renderArkBPRecordTab(positions) {
       ${usNotes}
       <div class="ark-rec-tools">
         <button class="button ghost ark-bp-add-top" type="button" id="ark-bp-add-blank">＋ 空白列</button>
-        <button class="button ghost ark-rec-spark-btn" type="button" id="ark-rec-spark">${state.arkRecSpark ? "隱藏趨勢圖" : "顯示趨勢圖"}</button>
+        <span class="ark-rec-trend-modes" role="group" aria-label="趨勢圖">
+          <span class="ark-rec-trend-title">趨勢圖</span>
+          <button class="holdings-subtab ark-rec-spark-btn${isSpark ? " is-active" : ""}" type="button" data-ark-rec-mode="spark">中間小圖</button>
+          <button class="holdings-subtab${trendMode === "all" ? " is-active" : ""}" type="button" data-ark-rec-mode="all">全部展開</button>
+          <button class="holdings-subtab${trendMode === "off" ? " is-active" : ""}" type="button" data-ark-rec-mode="off">全部收合</button>
+        </span>
       </div>
       <div class="ark-rec-header">
-        <span class="ar-rm"></span><span class="ar-sym">標的</span>${state.arkRecSpark ? '<span class="ar-spark">趨勢（虛線＝中位數、橘點＝偏高）</span>' : ""}<span class="ar-sh">股數</span><span class="ar-st"></span><span class="ar-cat">分類</span><span class="ar-norm">標準化</span><span class="ar-sig"></span><span class="ar-exp"></span>
+        <span class="ar-rm"></span><span class="ar-sym">標的</span>${isSpark ? '<span class="ar-spark">趨勢（虛線＝中位數、橘點＝偏高）</span>' : ""}<span class="ar-sh">股數</span><span class="ar-st"></span><span class="ar-cat">分類</span><span class="ar-norm">標準化</span><span class="ar-sig"></span><span class="ar-exp"></span>
       </div>
       ${visibleIndices.length ? rowsHtml : '<p class="muted-text" style="padding:8px 0">尚無' + (mkt === "TW" ? "台股" : "美股") + '標的</p>'}
       <div class="ark-bp-save-row">
@@ -9321,7 +9329,7 @@ function renderCloudSnapshot() {
       }
       state.arkBPDismissed.add(oldSym); // 打錯的代號若剛好在庫存，別被自動帶回來
       row.symbol = sym;
-      if (state.arkBPHistExpanded === oldSym) state.arkBPHistExpanded = sym;
+      if (state.arkRecExpanded.delete(oldSym)) state.arkRecExpanded.add(sym);
       state.arkBPDirty = true;
       renderCloudSnapshot();
     });
@@ -9332,7 +9340,7 @@ function renderCloudSnapshot() {
     const discard = state.arkBPDirty;
     if (discard && !confirm("這天有修改還沒儲存，確定要換日期？（修改會不見）")) { renderCloudSnapshot(); return; }
     state.arkBPDate = d && d < today() ? d : "";
-    state.arkBPHistExpanded = null;
+    state.arkRecExpanded.clear();
     // 丟掉修改要從 Sheet 重讀：改代號「其他日子一起改」動的是記憶體裡的紀錄（重讀時會順便重新帶入）
     if (discard) { loadBuyingPowerRecords(); return; }
     arkBPPrefillFromLast();
@@ -9365,18 +9373,23 @@ function renderCloudSnapshot() {
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-del-date]").forEach((btn) => {
     btn.addEventListener("click", () => deleteArkBPDate(btn.dataset.arkBpDelDate));
   });
-  els.cloudSnapshot.querySelector("#ark-rec-spark")?.addEventListener("click", () => {
-    state.arkRecSpark = !state.arkRecSpark;
-    renderCloudSnapshot();
+  els.cloudSnapshot.querySelectorAll("[data-ark-rec-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.arkRecTrendMode = btn.dataset.arkRecMode;
+      state.arkRecExpanded.clear();
+      renderCloudSnapshot();
+    });
   });
   // 紀錄頁 ◂▸ 跳上／下一個有紀錄的日子（v0.54.0）
   els.cloudSnapshot.querySelectorAll("[data-ark-rec-go]").forEach((btn) => {
     btn.addEventListener("click", () => { if (btn.dataset.arkRecGo) setArkBPDate(btn.dataset.arkRecGo); });
   });
-  els.cloudSnapshot.querySelectorAll("[data-ark-rec-exp]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const sym = btn.dataset.arkRecExp;
-      state.arkBPHistExpanded = state.arkBPHistExpanded === sym ? null : sym;
+  // 點列的空白處（或 ▾）就展開／收合那支的趨勢圖（v0.54.2，Sin：箭頭太小要點很準）；點到輸入框、按鈕、說明標籤不算
+  els.cloudSnapshot.querySelectorAll("[data-ark-rec-sym]").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("input, select, textarea, a, [data-ark-sig-tip], button:not([data-ark-rec-exp])")) return;
+      const sym = row.dataset.arkRecSym;
+      if (!state.arkRecExpanded.delete(sym)) state.arkRecExpanded.add(sym);
       renderCloudSnapshot();
     });
   });
