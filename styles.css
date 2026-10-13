@@ -4058,9 +4058,11 @@ textarea {
   padding: 0 4px;
 }
 
+.ark-bp-hist-header,
 .ark-bp-hist-row {
   display: grid;
-  grid-template-columns: 24px 12px 1fr 56px 64px 60px auto 24px;
+  grid-template-columns: 24px 12px 1fr 56px 64px 60px 24px 24px;
+  max-width: 480px; /* 同今日記錄：寬螢幕別讓代號和股數隔太遠（v0.53.11） */
   gap: 6px;
   align-items: center;
   padding: 6px 0;
