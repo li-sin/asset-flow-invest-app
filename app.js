@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.53.11";
+const APP_VERSION = "v0.53.12";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7309,17 +7309,32 @@ function arkBPClassifySignals(records) {
     const norm = arkBPRecNorm(r);
     const med = medians.get(r.symbol) || 0;
     const isSharesHigh = med > 0 && norm > med * 1.5;
-    const dayLevels = history.filter((h) => h.date === r.date);
+    // 只看同市場的水位：原本台美一起平均，台股訊號會混進美股水位（v0.53.12）
+    const mk = normalizeMarketKey(marketForSymbol(r.symbol));
+    const dayLevels = history.filter((h) => h.date === r.date && normalizeMarketKey(h.market) === mk);
     const avgLevel = dayLevels.length ? dayLevels.reduce((s, h) => s + (h.targetLevel || 0), 0) / dayLevels.length : 0;
     const isWaterHigh = avgLevel > 60;
     let signal = "";
-    if (isSharesHigh && !isWaterHigh) signal = "A";
+    // A 等級最高（兩項都偏高）→ C 只有股數偏高；Sin：A 通常指等級高，原 A/C 對調（v0.53.12）
+    if (isSharesHigh && isWaterHigh) signal = "A";
     else if (!isSharesHigh && isWaterHigh) signal = "B";
-    else if (isSharesHigh && isWaterHigh) signal = "C";
+    else if (isSharesHigh && !isWaterHigh) signal = "C";
     const key = `${r.date}_${r.symbol}`;
-    signals.set(key, { signal, norm, median: med });
+    signals.set(key, { signal, norm, median: med, water: dayLevels.length ? avgLevel : null });
   }
   return signals;
+}
+
+// 訊號說明（滑鼠移上＝title、手機點標籤＝浮動框，v0.53.12）：附這列實際數字，看得出為什麼亮
+const ARK_SIG_DESC = {
+  A: "A：股數偏高、水位也偏高——這支買特別多，整體也偏熱",
+  B: "B：股數正常、水位偏高——整體偏熱，這支沒有特別多",
+  C: "C：股數偏高、水位不高——這支買特別多，但整體還不熱",
+};
+function arkBPSignalTip(sig, norm, median, water) {
+  const shares = `標準化 ${formatArkNorm(norm)}｜這支中位數 ${formatArkNorm(median)}（偏高＝超過中位數×1.5＝${formatArkNorm(median * 1.5)}）`;
+  const lvl = water == null ? "當天沒有這個市場的水位紀錄" : `當天水位 ${formatNumber(water, 0)}%（偏高＝超過 60%）`;
+  return `${ARK_SIG_DESC[sig] || sig}\n${shares}\n${lvl}`;
 }
 
 // ===== 方舟戰法回測（v0.52.0，vault「戰法回測計畫」）=====
@@ -7745,7 +7760,8 @@ function renderArkBPHistoryTab() {
     const sig = info.signal || "";
     const dotClass = marketForSymbol(r.symbol) === "US" ? "list-dot-US" : "list-dot-TW";
     const hlClass = sig === "A" ? " is-highlight-a" : sig === "C" ? " is-highlight-c" : "";
-    const sigHtml = sig ? `<span class="ark-bp-signal ark-bp-signal-${sig.toLowerCase()}">${sig}</span>` : "<span></span>";
+    const sigTip = sig ? arkBPSignalTip(sig, norm, info.median, info.water) : "";
+    const sigHtml = sig ? `<span class="ark-bp-signal ark-bp-signal-${sig.toLowerCase()}" data-ark-sig-tip="${escapeHtml(sigTip)}" title="${escapeHtml(sigTip)}">${sig}</span>` : "<span></span>";
     const catLbl = { ETF: "ETF", IND: "產業", NON: "非" };
     // 點標籤改分類（先改記憶體，按「儲存分類變更」才寫 Sheet；v0.52.3）
     const recIdx = allRecords.indexOf(r);
@@ -7800,7 +7816,7 @@ function renderArkBPHistoryTab() {
   `;
 }
 
-// 標準化股數趨勢（v0.50.0）：縱軸從 0 起＋中位數／訊號 A 門檻（中位數×1.5）虛線，各標的可互相比較；
+// 標準化股數趨勢（v0.50.0）：縱軸從 0 起＋中位數／股數偏高門檻（中位數×1.5）虛線，各標的可互相比較；
 // 橫軸照真實日期；點擊點（透明大圓當觸控區）顯示當日股數／閒錢／標準化／相對中位數
 function renderArkBPSymbolTrend(symRecords, curDate) {
   if (symRecords.length < 2) {
@@ -7840,7 +7856,7 @@ function renderArkBPSymbolTrend(symRecords, curDate) {
   return `<div class="ark-bp-trend-box"><svg viewBox="0 0 ${W} ${H}" class="ark-bp-trend-svg">
     <line x1="${PL}" x2="${W - PR}" y1="${yAt(0)}" y2="${yAt(0)}" class="ark-bp-trend-axis" />
     <text x="${PL - 4}" y="${yAt(0) + 3}" text-anchor="end" font-size="8" fill="var(--muted)">0</text>
-    ${refLine(med, "中位數", "ark-bp-trend-med")}${refLine(thr, "A 門檻", "ark-bp-trend-thr")}
+    ${refLine(med, "中位數", "ark-bp-trend-med")}${refLine(thr, "偏高門檻", "ark-bp-trend-thr")}
     <polyline points="${polyPoints}" fill="none" stroke="var(--accent, var(--blue))" stroke-width="1.5" />
     ${dots}${xLabels}
   </svg>${flat ? `<p class="muted-text ark-bp-trend-note">期間內 ${points.length} 筆數值都一樣（${formatArkNorm(vals[0])}），不是圖壞了</p>` : `<p class="muted-text ark-bp-trend-note">點圓點看當日數值</p>`}</div>`;
@@ -9359,6 +9375,26 @@ function renderCloudSnapshot() {
       rec.shares = v;
       state.arkBPHistCatDirty = true;
       renderCloudSnapshot();
+    });
+  });
+  // 訊號標籤點一下跳說明框（手機沒有 hover；再點一次或點別處關掉）
+  els.cloudSnapshot.querySelectorAll("[data-ark-sig-tip]").forEach((tag) => {
+    tag.addEventListener("click", (e) => {
+      e.stopPropagation(); // 不觸發整列展開趨勢圖
+      const open = document.querySelector(".ark-sig-pop");
+      const same = open && open._anchor === tag;
+      open?.remove();
+      if (same) return;
+      const pop = document.createElement("div");
+      pop.className = "ark-sig-pop";
+      pop.textContent = tag.dataset.arkSigTip;
+      pop._anchor = tag;
+      document.body.appendChild(pop);
+      const r = tag.getBoundingClientRect();
+      const w = pop.offsetWidth;
+      pop.style.left = `${Math.max(8, Math.min(window.scrollX + r.right - w, window.scrollX + document.documentElement.clientWidth - w - 8))}px`;
+      pop.style.top = `${window.scrollY + r.bottom + 6}px`;
+      setTimeout(() => document.addEventListener("click", () => pop.remove(), { once: true }), 0);
     });
   });
   // 歷史紀錄改代號（v0.53.11）：可只改這天或所有日子一起改（例：少打 00 的 894 → 00894 合併）；按「儲存變更」才寫 Sheet

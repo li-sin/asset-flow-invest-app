@@ -4007,6 +4007,21 @@ textarea {
   justify-content: flex-end;
 }
 
+.ark-sig-pop {
+  position: absolute;
+  z-index: 1000;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel, var(--bg));
+  color: var(--ink);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  white-space: pre-line;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.ark-bp-signal[data-ark-sig-tip] { cursor: help; }
 .ark-bp-signal {
   display: inline-block;
   padding: 1px 6px;
