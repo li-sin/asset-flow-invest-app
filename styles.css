@@ -4113,6 +4113,15 @@ textarea {
 .ark-rec-expand { padding: 4px 0 0 28px; border-bottom: 1px solid rgba(58, 58, 60, 0.15); }
 .ark-rec-expand-norm { font-size: var(--fs-caption); color: var(--muted); }
 .ark-rec-expand .ark-bp-trend-box { border-bottom: 0; }
+.ark-rec-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.ark-rec-spark-btn { display: none; } /* 手機沒空間，只在寬螢幕出現 */
+.ar-spark { grid-area: spark; position: relative; display: none; min-width: 0; padding-left: 26px; }
+.ark-rec-header .ar-spark { padding-left: 0; }
+.ar-spark-svg { display: block; width: 100%; height: 52px; }
+.ar-spark-lbl { position: absolute; left: 0; font-size: 10px; line-height: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ar-spark-lbl.is-hi { top: 2px; }
+.ar-spark-lbl.is-lo { bottom: 2px; }
+.ar-spark-empty { font-size: var(--fs-caption); color: var(--muted); }
 .ark-rec-nav { flex-wrap: wrap; }
 .ark-rec-nav .ark-bp-date-input { margin-left: 0; width: auto; flex: 0 0 auto; }
 .ark-rec-nav .ark-bp-hist-del { margin-left: auto; }
@@ -4127,6 +4136,16 @@ textarea {
   .ar-norm { display: block; }
   .ar-st-pre { display: inline; }
   .ark-rec-expand { max-width: 640px; padding-left: 0; }
+  /* 小趨勢圖開啟：標的欄縮窄、中間給趨勢圖，列約 56px 高（v0.54.1） */
+  .is-spark .ark-rec-header,
+  .is-spark .ark-bp-row.ark-rec-row {
+    grid-template-columns: 24px 72px 76px 48px minmax(90px, 130px) minmax(160px, 1fr) 56px 26px 20px;
+    grid-template-areas: "rm sh st cat sym spark norm sig exp";
+    max-width: 900px;
+  }
+  .is-spark .ark-rec-expand { max-width: 900px; }
+  .ark-rec-spark-btn { display: inline-flex; }
+  .is-spark .ar-spark { display: block; }
   .ark-rec-expand-norm { display: none; }
 }
 .ark-bp-trend-box {
