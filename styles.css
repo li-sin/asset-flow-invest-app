@@ -4132,23 +4132,16 @@ textarea {
 @media (min-width: 700px) {
   .ark-rec-header,
   .ark-bp-row.ark-rec-row {
-    grid-template-columns: 24px 72px 76px 48px minmax(120px, 1fr) 56px 26px 20px;
-    grid-template-areas: "rm sh st cat sym norm sig exp";
+    /* 小圖欄（spark）一律保留 160px：切「中間小圖」只長高不變寬，畫面不跳（v0.54.5）
+       160×52 約 3:1，最近 30 筆的波動看得清楚；標的 130px 放得下 6 碼代號＋⚠ */
+    grid-template-columns: 24px 72px 76px 48px 130px 160px 56px 26px 20px;
+    grid-template-areas: "rm sh st cat sym spark norm sig exp";
     gap: 8px;
-    max-width: 640px;
+    max-width: 676px;
   }
   .ar-norm { display: block; }
   .ar-st-pre { display: inline; }
-  .ark-rec-expand { max-width: 640px; padding-left: 0; }
-  /* 小趨勢圖開啟：標的欄縮窄、中間給趨勢圖，列約 56px 高（v0.54.1） */
-  .is-spark .ark-rec-header,
-  .is-spark .ark-bp-row.ark-rec-row {
-    /* 小圖欄限 120–170px：太寬會把每支都拉成平緩上升，看不出波動（v0.54.3） */
-    grid-template-columns: 24px 72px 76px 48px minmax(90px, 130px) minmax(120px, 170px) 56px 26px 20px;
-    grid-template-areas: "rm sh st cat sym spark norm sig exp";
-    max-width: 760px;
-  }
-  .is-spark .ark-rec-expand { max-width: 760px; }
+  .ark-rec-expand { max-width: 676px; padding-left: 0; }
   .ark-rec-spark-btn { display: inline-flex; }
   .is-spark .ar-spark { display: block; }
   .ark-rec-expand-norm { display: none; }
