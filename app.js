@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.54.5";
+const APP_VERSION = "v0.54.6";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7716,7 +7716,7 @@ function renderArkBPRecordTab(positions) {
     }
     return `${groupHeader}
       <div class="ark-bp-row ark-rec-row${hlClass}" data-ark-bp-idx="${i}"${r.symbol ? ` data-ark-rec-sym="${escapeHtml(r.symbol)}"` : ""}>
-        <button class="ark-bp-remove-btn ar-rm" data-ark-bp-remove="${i}" type="button" title="移除這一列（按儲存後生效）">−</button>
+        <button class="ark-bp-remove-btn ar-rm" data-ark-bp-remove="${i}" type="button" title="按兩下移除這一列（按儲存後生效）">−</button>
         <div class="ark-bp-symbol ar-sym">${symbolHtml}</div>
         <input class="ark-bp-field ar-sh${arkBPRowStatus(r, curDate)?.stale ? " is-stale" : ""}" type="number" ${mkt === "US" ? 'inputmode="decimal" step="any"' : 'inputmode="numeric"'} data-ark-bp-field="shares" data-ark-bp-i="${i}" value="${escapeHtml(r.shares)}" placeholder="股數">
         <span class="ar-st">${arkBPStatusHtml(r, curDate, i)}</span>
@@ -9453,6 +9453,21 @@ function renderCloudSnapshot() {
   });
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-remove]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      // 按兩下才刪：第一下變紅確認，3 秒內再按才移除（v0.54.6，防誤觸）
+      if (!btn.classList.contains("is-armed")) {
+        els.cloudSnapshot.querySelectorAll(".ark-bp-remove-btn.is-armed").forEach((b) => {
+          b.classList.remove("is-armed");
+          b.textContent = "−";
+        });
+        btn.classList.add("is-armed");
+        btn.textContent = "刪";
+        clearTimeout(btn._disarmTimer);
+        btn._disarmTimer = setTimeout(() => {
+          btn.classList.remove("is-armed");
+          btn.textContent = "−";
+        }, 3000);
+        return;
+      }
       const i = Number(btn.dataset.arkBpRemove);
       const sym = state.arkBPRows[i]?.symbol;
       if (sym) state.arkBPDismissed.add(sym);

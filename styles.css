@@ -4180,6 +4180,7 @@ textarea {
   line-height: 1;
 }
 .ark-bp-remove-btn:hover { color: var(--red); }
+.ark-bp-remove-btn.is-armed { background: var(--red); border-color: var(--red); color: #fff; font-size: 11px; }
 
 /* ── 5. ANIMATIONS & SKELETON ────────────────────────────────── */
 
