@@ -1567,11 +1567,17 @@ textarea {
   white-space: nowrap;
 }
 
+/* 確認／取消放在日期欄上方：原生日曆往下展開且選完不會自動收起，放下方會被蓋住 */
 .snap-date-edit-row {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
-  flex-wrap: wrap;
+}
+
+.snap-date-edit-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .snap-date-edit-input {
