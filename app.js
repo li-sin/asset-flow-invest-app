@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.54.6";
+const APP_VERSION = "v0.54.7";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -8807,7 +8807,12 @@ function renderCloudSnapshot() {
       state.editingDateSnapshotId = snapId;
       renderCloudSnapshot();
       const input = els.cloudSnapshot.querySelector(`.snap-date-edit-input[data-snap-id="${CSS.escape(snapId)}"]`);
-      if (input) { input.focus(); try { input.showPicker(); } catch (_) {} }
+      if (input) {
+        // 選完日期就 blur 收起日曆，否則日曆會一直蓋住下方的確認鈕
+        input.addEventListener("change", () => input.blur());
+        input.focus();
+        try { input.showPicker(); } catch (_) {}
+      }
     });
   });
   els.cloudSnapshot.querySelectorAll(".snap-date-cancel").forEach((btn) => {
