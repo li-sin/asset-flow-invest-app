@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.54.8";
+const APP_VERSION = "v0.54.9";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7206,6 +7206,9 @@ async function saveArkBPRecords() {
   // 同代號出現兩次會存成重複紀錄（9/23 MPC 案例）→ 擋下（v0.52.5）
   const dupSyms = [...new Set(validRows.map((r) => r.symbol.toUpperCase()).filter((sym, i, a) => a.indexOf(sym) !== i))];
   if (dupSyms.length) { alert(`代號重複：${dupSyms.join("、")}，請刪掉多的那列再儲存`); return; }
+  // 股數空白會存成 0 股 → 先問（要清倉請打 0，v0.54.9）
+  const blankSyms = validRows.filter((r) => String(r.shares ?? "").trim() === "").map((r) => r.symbol.toUpperCase());
+  if (blankSyms.length && !confirm(`股數空白：${blankSyms.join("、")}，會存成 0 股，確定要儲存？`)) return;
   // 價值區應為 10 檔（台股只布局 ETF 價值區）：超過就請 Sin 確認，避免回測多買（v0.52.0）
   const etfCount = mkt === "TW" ? validRows.filter((r) => (r.cat || "ETF") === "ETF").length : 0;
   if (mkt === "US" && (!state.arkRankSel[1] || !state.arkRankSel[2]) && !confirm("位階最高 1、2 還沒填（回測 1 股／100 美元要用），確定先儲存？")) return;
@@ -9250,6 +9253,13 @@ function renderCloudSnapshot() {
       input.classList.toggle("is-stale", !!arkBPRowStatus(state.arkBPRows[i], todayStr)?.stale);
       const old = input.closest(".ark-bp-row")?.querySelector(".ark-bp-status");
       if (old) old.outerHTML = arkBPStatusHtml(state.arkBPRows[i], todayStr, i);
+    });
+    // 股數清空後離開欄位 → 填回上次股數，畫面跟沒碰過一樣（v0.54.9）
+    if (input.dataset.arkBpField === "shares") input.addEventListener("blur", () => {
+      const row = state.arkBPRows[Number(input.dataset.arkBpI)];
+      if (!row || row.srcShares === undefined || String(input.value).trim() !== "") return;
+      row.shares = row.srcShares;
+      input.value = row.srcShares;
     });
   });
   // 防呆：代號打完（change＝離開欄位）若與其他列重複 → 不留第二列；有填股數就更新原本那列並提醒（v0.52.5）

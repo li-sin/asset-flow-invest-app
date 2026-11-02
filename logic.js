@@ -108,6 +108,8 @@ export function arkBPPrefillRows(records) {
 
 export function arkBPShareChanged(row) {
   if (row.srcShares === undefined) return true;
+  // 清空＝沒改（打錯刪掉不該留 ✓；離開欄位會填回上次股數，v0.54.9）；要清倉請打 0
+  if (String(row.shares ?? "").trim() === "") return false;
   return Number(row.shares || 0) !== Number(row.srcShares || 0);
 }
 
