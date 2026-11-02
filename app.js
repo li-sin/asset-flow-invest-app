@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.54.9";
+const APP_VERSION = "v0.54.10";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7206,8 +7206,8 @@ async function saveArkBPRecords() {
   // 同代號出現兩次會存成重複紀錄（9/23 MPC 案例）→ 擋下（v0.52.5）
   const dupSyms = [...new Set(validRows.map((r) => r.symbol.toUpperCase()).filter((sym, i, a) => a.indexOf(sym) !== i))];
   if (dupSyms.length) { alert(`代號重複：${dupSyms.join("、")}，請刪掉多的那列再儲存`); return; }
-  // 股數空白會存成 0 股 → 先問（要清倉請打 0，v0.54.9）
-  const blankSyms = validRows.filter((r) => String(r.shares ?? "").trim() === "").map((r) => r.symbol.toUpperCase());
+  // 新列股數空白會存成 0 股 → 先問（要清倉請打 0，v0.54.9）；帶入過的列空白＝上次就是 0，不問（v0.54.10）
+  const blankSyms = validRows.filter((r) => r.srcShares === undefined && String(r.shares ?? "").trim() === "").map((r) => r.symbol.toUpperCase());
   if (blankSyms.length && !confirm(`股數空白：${blankSyms.join("、")}，會存成 0 股，確定要儲存？`)) return;
   // 價值區應為 10 檔（台股只布局 ETF 價值區）：超過就請 Sin 確認，避免回測多買（v0.52.0）
   const etfCount = mkt === "TW" ? validRows.filter((r) => (r.cat || "ETF") === "ETF").length : 0;
