@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.54.11";
+const APP_VERSION = "v0.54.12";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -6873,7 +6873,7 @@ function latestSnapshotDateForMarket(market) {
 function renderArkRefill(marketSummaries, dataDate, marketsWithSnap) {
   const refill = state.arkRefill;
   const sharesOnly = refill.mode === "shares-only";
-  // 只複製股數模式也是兩段式：①代號 → ②股數（v0.54.11，方舟要先找到／新增那支才能貼股數）
+  // 只複製股數模式：左邊「📋 代號」＋右邊「複製股數」（v0.54.12；label 只給說明文字用）
   const firstLabel = sharesOnly ? "代號" : (refill.order === "avgcost-first" ? "均價" : "股數");
   const secondLabel = sharesOnly ? "股數" : (refill.order === "avgcost-first" ? "股數" : "均價");
   const activeMarket = refill.market === "US" ? "US" : "TW";
@@ -6946,7 +6946,7 @@ function renderArkRefill(marketSummaries, dataDate, marketsWithSnap) {
       const avgPending = Number(r.avgCost || 0) <= 0;
       const name = escapeHtml(r.name || resolveSymbolName(r.symbol) || "");
       const sym = escapeHtml(r.symbol);
-      const dataAttrs = `data-ark-key="${escapeHtml(key)}" data-ark-symbol="${sym}" data-ark-shares="${escapeHtml(arkRefillValue(r.shares))}" data-ark-avg="${escapeHtml(arkRefillValue(r.avgCost))}"`;
+      const dataAttrs = `data-ark-key="${escapeHtml(key)}" data-ark-shares="${escapeHtml(arkRefillValue(r.shares))}" data-ark-avg="${escapeHtml(arkRefillValue(r.avgCost))}"`;
       let action;
       if (isStatic) {
         // 值一致時分兩種：今天回填過＝「✓ 已回填」（ts 有同步雲端，手機/電腦看到的一致）；
@@ -6961,18 +6961,22 @@ function renderArkRefill(marketSummaries, dataDate, marketsWithSnap) {
         action = `<span class="ark-refill-pending">⚠️ 均價待補，補上後才能回填</span>`;
       } else if (phase === "done") {
         action = `<span class="ark-refill-done">✓ 已回填</span><button class="button compact ghost ark-refill-btn" data-ark-redo ${dataAttrs}>重做</button>`;
-      } else if (phase === "mid") {
+      } else if (!sharesOnly && phase === "mid") {
         action = `<span class="ark-refill-hint">已複製${firstLabel} ✓ 去方舟貼上</span><button class="button compact primary ark-refill-btn" data-ark-copy="second" ${dataAttrs}>② 複製${secondLabel}</button>`;
       } else if (isAvgOnly) {
         // 股數沒動、均價超容差：標出幅度讓 Sin 自己判斷值不值得去方舟改，按鈕降為 ghost（不催）
         const sign = diff.avgDelta > 0 ? "+" : "−";
         action = `<span class="ark-refill-avgonly">僅均價 ${sign}${formatNumber(Math.abs(diff.avgDelta), 4)}</span><button class="button compact ghost ark-refill-btn" data-ark-copy="first" ${dataAttrs}>仍要回填</button>`;
       } else {
-        action = `<button class="button compact primary ark-refill-btn" data-ark-copy="first" ${dataAttrs}>① 複製${firstLabel}</button>`;
+        action = sharesOnly
+          ? `<button class="button compact primary ark-refill-btn" data-ark-copy="first" ${dataAttrs}>複製股數</button>`
+          : `<button class="button compact primary ark-refill-btn" data-ark-copy="first" ${dataAttrs}>① 複製${firstLabel}</button>`;
       }
+      // 「📋 代號」：新標的一律給（v0.49.2）；只複製股數模式下待回填的也給，放代號旁、不跟複製股數擠一起（v0.54.12）
+      const showSymbolBtn = newSymbols.has(r.symbol) || (sharesOnly && !isStatic && phase !== "done");
       return `
         <div class="ark-refill-item${phase === "done" ? " is-done" : ""}${phase === "mid" ? " is-mid" : ""}${isStatic ? " is-static" : ""}${isAvgOnly ? " is-avgonly" : ""}" data-ark-item="${escapeHtml(key)}">
-          <div class="ark-refill-id"><strong>${sym}</strong>${newSymbols.has(r.symbol) ? ` <button class="ark-copy-symbol" data-ark-copy-symbol="${sym}" type="button" title="新加入的標的：先複製代號到方舟新增">📋 代號</button>` : ""} <span class="muted-text">${name}</span> <span class="ark-refill-lastfill">${escapeHtml(arkLastRefillLabel(key))}</span></div>
+          <div class="ark-refill-id"><strong>${sym}</strong>${showSymbolBtn ? ` <button class="ark-copy-symbol" data-ark-copy-symbol="${sym}" type="button" title="${newSymbols.has(r.symbol) ? "新加入的標的：先複製代號到方舟新增" : "複製代號到方舟搜尋"}">📋 代號</button>` : ""} <span class="muted-text">${name}</span> <span class="ark-refill-lastfill">${escapeHtml(arkLastRefillLabel(key))}</span></div>
           <div class="ark-refill-vals"><span>股數 <b>${formatNumber(r.shares, 4)}</b></span><span>均價 <b>${formatNumber(r.avgCost, 4)}</b></span></div>
           <div class="ark-refill-action">${action}</div>
         </div>`;
@@ -7039,14 +7043,12 @@ async function handleArkCopy(btn, segment) {
   const sharesOnly = state.arkRefill.mode === "shares-only";
   const order = state.arkRefill.order;
   const firstField = order === "avgcost-first" ? "avgcost" : "shares";
-  const field = sharesOnly
-    ? (segment === "first" ? "symbol" : "shares")
-    : (segment === "first" ? firstField : (firstField === "shares" ? "avgcost" : "shares"));
-  const value = field === "symbol" ? btn.dataset.arkSymbol : (field === "shares" ? btn.dataset.arkShares : btn.dataset.arkAvg);
+  const field = sharesOnly ? "shares" : (segment === "first" ? firstField : (firstField === "shares" ? "avgcost" : "shares"));
+  const value = field === "shares" ? btn.dataset.arkShares : btn.dataset.arkAvg;
   // 進度要在 await 之前存：iOS Chrome 一切去方舟分頁就被凍結、回來整頁重載，
   // await 之後的程式常常跑不到 → ① 的 mid／② 的 done 都沒存到（v0.49.3）
   const copying = arkCopyText(value);
-  if (segment === "first") {
+  if (!sharesOnly && segment === "first") {
     state.arkRefill.phase[key] = "mid";
     saveArkRefillState();
     renderCloudSnapshot();
