@@ -6,7 +6,8 @@ import {
   arkBPPrefillRows, arkBPShareChanged, arkBPRowUpdated, arkBPRowStatus,
   newSymbolsVsPrevSnapshot,
   simulateArkStrategy,
-} from './logic.js?v=0.55.0'; // ?v＝HTTP cache bust，每次 push 跟 index.html 一起改
+  marketSessionDate,
+} from './logic.js?v=0.56.0'; // ?v＝HTTP cache bust，每次 push 跟 index.html 一起改
 
 window.taipeiNow = taipeiNow;
 window.today = today;
@@ -23,3 +24,4 @@ window.arkBPRowUpdated = arkBPRowUpdated;
 window.arkBPRowStatus = arkBPRowStatus;
 window.newSymbolsVsPrevSnapshot = newSymbolsVsPrevSnapshot;
 window.simulateArkStrategy = simulateArkStrategy;
+window.marketSessionDate = marketSessionDate;

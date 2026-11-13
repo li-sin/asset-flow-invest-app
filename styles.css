@@ -4292,3 +4292,14 @@ button.ark-bp-cat-badge { border: 0; cursor: pointer; font: inherit; }
 .ark-bp-warn-note { font-size: var(--fs-caption); color: var(--amber); margin: 4px 0; }
 .ark-bt-summary .ark-bt-over { color: var(--amber); }
 .ark-rank-pick select { max-width: 92px; }
+
+/* 首頁記錄提醒（v0.56.0） */
+.ark-remind { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.ark-remind-item {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; border-radius: var(--radius-card);
+  border: 1px solid var(--amber); background: var(--panel);
+}
+.ark-remind-text { color: var(--amber); font-weight: 600; }
+.ark-remind-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ark-remind-actions .button { padding: 6px 12px; min-height: 0; }

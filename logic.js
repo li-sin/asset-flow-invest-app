@@ -300,3 +300,20 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
   const annualized = totalReturn !== null && spanDays >= 1 ? Math.pow(1 + totalReturn, 365 / spanDays) - 1 : null;
   return { series, finalValue: last?.value ?? start, totalReturn, annualized, spanDays, holdings: [...holdings.entries()].map(([symbol, h]) => ({ symbol, ...h })) };
 }
+
+// ===== 開盤場次（首頁記錄提醒，v0.56.0）=====
+// 回傳 now 當下「最近一次開盤」那場的日期（YYYY-MM-DD，開盤當地日期）：
+//   台股 Asia/Taipei 09:00、美股 America/New_York 09:30（自動夏令；換台灣時間 21:30／22:30，同一個台灣日期）
+//   只算週一～週五，不認國定假日（休市日由首頁「休市略過」處理）
+// 提醒規則（Sin 定 2026-11-13）：那場水位或方舟紀錄沒記 → 一直提醒到下一場開盤前
+const MARKET_OPEN = { TW: { tz: "Asia/Taipei", h: 9, m: 0 }, US: { tz: "America/New_York", h: 9, m: 30 } };
+export function marketSessionDate(market, nowMs = Date.now()) {
+  const o = MARKET_OPEN[market]; if (!o) return "";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: o.tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(nowMs)).map((p) => [p.type, p.value]));
+  const d = new Date(Date.UTC(+parts.year, +parts.month - 1, +parts.day));
+  if (+parts.hour * 60 + +parts.minute < o.h * 60 + o.m) d.setUTCDate(d.getUTCDate() - 1);
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}

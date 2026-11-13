@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.55.0";
+const APP_VERSION = "v0.56.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -97,6 +97,8 @@ const state = {
   arkBTSel: { date: null, strategy: null },
   arkBTSort: null, // 回測當天持股表排序 { key, dir }；null＝代號 A→Z
   arkBPDirty: false, // 紀錄頁有修改還沒儲存（換日期前先問，v0.54.0）
+  arkBPLevelInput: null, // 紀錄頁水位欄（null＝沒動過，顯示那天已記的水位；v0.56.0）
+  arkRemindLoadTried: false, // 首頁記錄提醒：方舟紀錄只自動載入一次（v0.56.0）
   arkBTCloses: { TW: "idle", US: "idle" }, // 回測歷史收盤：idle/loading/done（各市場只抓一次）
   arkBPMarket: "TW",
   arkBPRecords: [],
@@ -7122,13 +7124,14 @@ async function loadBuyingPowerRecords(silent) {
       });
     }
     state.arkBPRecords = records;
+    state.arkBPLoaded = true;
     arkBPPrefillFromLast();
     await loadArkRankRecords();
   } catch (e) {
     console.warn("loadBuyingPowerRecords", e);
   } finally {
     state.arkBPLoading = false;
-    if (!silent || state.dashboardTab === "ark") renderCloudSnapshot();
+    if (!silent || state.dashboardTab === "ark" || state.dashboardTab === "home") renderCloudSnapshot();
   }
 }
 
@@ -7161,7 +7164,7 @@ function arkBPDerivedTotalHtml(mkt) {
   if (!cash || cash <= 0) return "";
   if (state.arkBPDate && state.arkBPDate !== today()) return `<div class="ark-bp-derived muted-text">補記以前的日子不推算總資產（持股與報價都是現在的）</div>`;
   if (cash === 100000) return `<div class="ark-bp-derived muted-text">閒錢＝10 萬基準，無法推算總資產（要推算請填方舟的實際建議布局金額）</div>`;
-  const level = targetLevelFromHistory(mkt);
+  const level = Number(state.arkBPLevelInput) || targetLevelFromHistory(mkt); // 紀錄頁水位欄有填就用（v0.56.0）
   if (!level) return `<div class="ark-bp-derived muted-text">缺${mkt === "US" ? "美股" : "台股"}水位，無法推算總資產</div>`;
   const pos = _arkBPLastPositions.filter((p) => marketForSymbol(p.symbol) === mkt && Number(p.shares) > 0);
   if (!pos.length) return "";
@@ -7186,6 +7189,7 @@ function arkBPDerivedTotalHtml(mkt) {
 // 補記以前的日子（arkBPDate 有值）：只用那天以前（含）的紀錄帶入，那天已有紀錄就帶那天的（v0.53.5）
 function arkBPPrefillFromLast() {
   state.arkBPDirty = false;
+  state.arkBPLevelInput = null;
   const asOf = state.arkBPDate || "";
   const records = state.arkBPRecords.filter((r) => !asOf || r.date <= asOf);
   if (!records.length) { state.arkBPRows = []; return; }
@@ -7216,6 +7220,12 @@ async function saveArkBPRecords() {
   const etfCount = mkt === "TW" ? validRows.filter((r) => (r.cat || "ETF") === "ETF").length : 0;
   if (mkt === "US" && (!state.arkRankSel[1] || !state.arkRankSel[2]) && !confirm("位階最高 1、2 還沒填（回測 1 股／100 美元要用），確定先儲存？")) return;
   const saveDate = state.arkBPDate || today();
+  // 水位跟紀錄一起存（v0.56.0：水位統一在方舟紀錄頁輸入，首頁只顯示）
+  const lvRec = arkBPLevelRecord(mkt, saveDate);
+  const lvText = String(state.arkBPLevelInput ?? (lvRec ? lvRec.targetLevel : "")).replace("%", "").trim();
+  const lvNum = lvText === "" ? null : Number(lvText);
+  if (lvNum !== null && !(Number.isFinite(lvNum) && lvNum >= 0 && lvNum <= 100)) { alert("水位請輸入 0 到 100 的百分比"); return; }
+  if (lvNum === null && !confirm(`${saveDate.slice(5).replace("-", "/")} ${mkt === "TW" ? "台股" : "美股"}水位沒填，確定先儲存？`)) return;
   if (saveDate !== today() && state.arkBPRecords.some((r) => r.date === saveDate && marketForSymbol(r.symbol) === mkt)
     && !confirm(`${saveDate} 已有${mkt === "TW" ? "台股" : "美股"}紀錄，確定要用現在的內容覆蓋？`)) return;
   if (etfCount > 10 && !confirm(`ETF 價值區有 ${etfCount} 檔（超過 10 檔），確定要這樣儲存？`)) return;
@@ -7231,6 +7241,7 @@ async function saveArkBPRecords() {
     const allRecords = [...kept, ...newEntries];
     await writeBuyingPowerRecords(allRecords);
     if (mkt === "US") await saveArkRankRecords(date);
+    if (lvNum !== null && lvNum !== lvRec?.targetLevel) await saveTargetLevelToSheet(mkt, lvNum, date);
     await loadBuyingPowerRecords();
   } catch (e) {
     alert("儲存失敗：" + (e.message || e));
@@ -7634,6 +7645,74 @@ function arkRankPickerHtml(positions, todayStr) {
 // 方舟「紀錄」頁（v0.54.0：今日記錄＋歷史紀錄合併）
 // 選哪天就帶入那天：有紀錄＝那天存的、沒有＝之前最近一次；每列都是輸入框，按「儲存」整天覆蓋
 // 一份 DOM 靠 CSS 切版：寬螢幕〔輸入｜標的｜標準化・訊號〕、手機一列精簡＋▾ 展開（Sin 選調整後方案 A）
+// 紀錄頁水位欄（v0.56.0）：那天這個市場已記的水位；沒記就留空、旁邊給「上次 M/D X%」點一下帶入
+function arkBPLevelRecord(mkt, date) {
+  return (state.targetLevelHistory || []).find((h) => h.market === mkt && h.date === date) || null;
+}
+function arkBPLevelRowHtml(mkt, curDate) {
+  const rec = arkBPLevelRecord(mkt, curDate);
+  const prev = (state.targetLevelHistory || []).filter((h) => h.market === mkt && h.date < curDate)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+  const val = state.arkBPLevelInput ?? (rec ? String(rec.targetLevel) : "");
+  const prevBtn = !rec && prev && Number.isFinite(prev.targetLevel)
+    ? `<button class="ark-bp-idle-preset" type="button" id="ark-bp-level-prev" data-level="${escapeHtml(String(prev.targetLevel))}">上次 ${escapeHtml(prev.date.slice(5).replace("-", "/"))} ${escapeHtml(String(prev.targetLevel))}%</button>`
+    : "";
+  return `
+      <div class="ark-bp-idle-row">
+        <label>水位 %</label>
+        <input class="ark-bp-idle-input" type="number" inputmode="decimal" step="0.1" min="0" max="100" id="ark-bp-level" value="${escapeHtml(val)}" placeholder="${rec ? "" : "還沒記"}">
+        ${prevBtn}
+      </div>`;
+}
+
+// ===== 首頁記錄提醒（v0.56.0）=====
+// 各市場「最近一次開盤」那場（marketSessionDate）水位或方舟紀錄沒記 → 提醒到下一場開盤前；休市日可按「休市略過」（存本機）
+const ARK_REMIND_SKIP_KEY = "assetflow-ark-remind-skip";
+function arkRemindSkips() {
+  try { const v = JSON.parse(localStorage.getItem(ARK_REMIND_SKIP_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function arkRemindSkip(key) {
+  try { localStorage.setItem(ARK_REMIND_SKIP_KEY, JSON.stringify([...arkRemindSkips().filter((k) => k !== key), key].slice(-30))); } catch { /* 存不了就只是下次還會提醒 */ }
+}
+function arkRemindHtml() {
+  if (!state.auth?.authorized) return "";
+  if (!state.arkBPLoaded) {
+    if (!state.arkRemindLoadTried && !state.arkBPLoading) { state.arkRemindLoadTried = true; setTimeout(() => loadBuyingPowerRecords(true), 0); }
+    return "";
+  }
+  const skips = arkRemindSkips();
+  const items = ["TW", "US"].map((mkt) => {
+    const date = window.marketSessionDate(mkt);
+    if (!date || skips.includes(`${mkt}:${date}`)) return "";
+    const missing = [
+      (state.targetLevelHistory || []).length && !arkBPLevelRecord(mkt, date) ? "水位" : "",
+      !state.arkBPRecords.some((r) => r.date === date && marketForSymbol(r.symbol) === mkt) ? "方舟紀錄" : "",
+    ].filter(Boolean);
+    if (!missing.length) return "";
+    return `<div class="ark-remind-item">
+      <span class="ark-remind-text">⚠️ ${mkt === "TW" ? "台股" : "美股"} ${escapeHtml(date.slice(5).replace("-", "/"))} 那場：${missing.join("、")}還沒記</span>
+      <span class="ark-remind-actions">
+        <button class="button ark-remind-go" type="button" data-ark-remind-go="${mkt}" data-date="${escapeHtml(date)}">去記錄 →</button>
+        <button class="button ghost ark-remind-skip" type="button" data-ark-remind-skip="${mkt}:${escapeHtml(date)}" title="那天休市：這場不再提醒（只記在這台裝置）">休市略過</button>
+      </span>
+    </div>`;
+  }).join("");
+  return items ? `<div class="ark-remind">${items}</div>` : "";
+}
+
+// 補記以前的日子：換日期就重新帶入那天以前（含）最近的紀錄與位階（v0.53.5；v0.56.0 移到外層給首頁提醒共用）
+function setArkBPDate(d) {
+  const discard = state.arkBPDirty;
+  if (discard && !confirm("這天有修改還沒儲存，確定要換日期？（修改會不見）")) { renderCloudSnapshot(); return; }
+  state.arkBPDate = d && d < today() ? d : "";
+  state.arkRecExpanded.clear();
+  // 丟掉修改要從 Sheet 重讀：改代號「其他日子一起改」動的是記憶體裡的紀錄（重讀時會順便重新帶入）
+  if (discard) { loadBuyingPowerRecords(); return; }
+  arkBPPrefillFromLast();
+  arkRankPrefill();
+  renderCloudSnapshot();
+}
+
 function renderArkBPRecordTab(positions) {
   const mkt = state.arkBPMarket || "TW";
   _arkBPLastPositions = positions || [];
@@ -7766,6 +7845,7 @@ function renderArkBPRecordTab(positions) {
         <input class="ark-bp-idle-input" type="number" inputmode="numeric" id="ark-bp-calc" value="${escapeHtml(state.arkBPCalcCash)}" placeholder="同閒錢">
         <button class="ark-bp-idle-preset" type="button" id="ark-bp-calc-100w">100萬</button>
       </div>
+      ${arkBPLevelRowHtml(mkt, curDate)}
       <div id="ark-bp-derived-slot">${arkBPDerivedTotalHtml(mkt)}</div>
       ${mkt === "US" ? arkRankPickerHtml(positions, curDate) : ""}
       ${dupCount ? `<p class="ark-bp-warn-note">⚠️ ${dupCount} 支同一天記了兩次以上：按其中一列的 − 移除多的再儲存</p>` : ""}
@@ -7987,12 +8067,8 @@ function renderCloudSnapshot() {
   const marketCards = marketSummaries.map((item) => {
     const todayStr = today();
     const mktHistory = state.targetLevelHistory.filter((h) => h.market === item.market);
-    const selDate = state.levelUpdateDate[item.market] || todayStr; // 1a：選定日期，預設今天
-    const selRecord = mktHistory.find((h) => h.date === selDate);
     const latest = mktHistory[0];
     const prev = mktHistory[1];
-    // 輸入框反映「選定日期」已記錄的水位；該日尚無紀錄則帶當前水位當預設（Sin 需求 2026-07-17，微調免重打）
-    const inputVal = selRecord ? selRecord.targetLevel : (item.targetLevel ?? "");
     const lastRecordText = latest ? `上次更新：${latest.date}` : "尚未記錄";
     const heroNum = item.targetLevel === null ? "—" : String(Math.round(item.targetLevel * 10) / 10);
     // 較上次水位變化（漲綠跌紅），只有一筆或缺值時不顯示
@@ -8018,14 +8094,7 @@ function renderCloudSnapshot() {
       </div>
       <div class="mw-sub">${escapeHtml(subText)}</div>
       <div class="level-update-panel">
-        <label class="level-date-chip">
-          <svg class="ldc-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
-          <span class="ldc-text">${escapeHtml(selDate.slice(5).replace("-", "/"))}</span>
-          <input class="level-date-input" data-level-date-market="${escapeHtml(item.market)}" type="date" max="${escapeHtml(todayStr)}" value="${escapeHtml(selDate)}" aria-label="更新日期">
-        </label>
-        <input class="target-level-input" data-target-level-market="${escapeHtml(item.market)}" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="水位%" value="${escapeHtml(String(inputVal))}">
-        <span class="level-unit">%</span>
-        <button class="level-update-btn" title="更新水位" data-target-level-market="${escapeHtml(item.market)}">更新</button>
+        <!-- v0.56.0：水位改在方舟→紀錄頁輸入，首頁只顯示 -->
         <div class="level-last-record" data-level-last="${escapeHtml(item.market)}">${escapeHtml(lastRecordText)}</div>
       </div>
       <div class="market-stats">
@@ -8328,6 +8397,7 @@ function renderCloudSnapshot() {
           <h3>市場水位</h3>
           <span>建議水位為各市場庫存占總資金的比例</span>
         </div>
+        ${arkRemindHtml()}
         <div class="market-water-grid">${marketCards}</div>
       </section>
 
@@ -8870,42 +8940,6 @@ function renderCloudSnapshot() {
       }
     });
   });
-  els.cloudSnapshot.querySelectorAll(".level-date-input").forEach((inp) => {
-    inp.addEventListener("change", (e) => {
-      const market = e.target.dataset.levelDateMarket;
-      state.levelUpdateDate[market] = e.target.value || today();
-      renderCloudSnapshot(); // 重繪讓 % 輸入框反映該日已記錄的水位
-    });
-  });
-  // 整顆日期膠囊點下去都要開日曆：WebKit 靠 CSS 撐滿 indicator（點擊落在 input 本體、這裡不重複處理），
-  // 其餘瀏覽器（如 Firefox）點到 icon/文字時用 showPicker() 補
-  els.cloudSnapshot.querySelectorAll(".level-date-chip").forEach((chip) => {
-    chip.addEventListener("click", (e) => {
-      const input = chip.querySelector(".level-date-input");
-      if (!input || e.target === input) return;
-      try { input.showPicker(); } catch (_) { input.focus(); }
-    });
-  });
-  els.cloudSnapshot.querySelectorAll(".level-update-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const market = btn.dataset.targetLevelMarket;
-      const panel = btn.closest(".level-update-panel");
-      const input = panel?.querySelector("input[data-target-level-market]");
-      if (!input) return;
-      if (!updateTargetLevel(market, input.value)) return;
-      const dateStr = panel?.querySelector("input[data-level-date-market]")?.value || today();
-      const feedback = panel?.querySelector(".level-last-record");
-      if (feedback) feedback.textContent = "同步中…";
-      btn.disabled = true;
-      try {
-        await saveTargetLevelToSheet(market, state.targetLevels[market], dateStr);
-        renderCloudSnapshot();
-      } catch (error) {
-        if (feedback) feedback.textContent = String(error?.message || "").includes("登入已過期") ? error.message : "儲存失敗，請重試";
-        btn.disabled = false;
-      }
-    });
-  });
   // 所有趨勢圖 tooltip：用事件委派取代靜態綁定，確保動態插入的個股走勢圖也生效
   els.cloudSnapshot.addEventListener("click", (e) => {
     const dot = e.target.closest
@@ -9216,6 +9250,7 @@ function renderCloudSnapshot() {
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-market]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.arkBPMarket = btn.dataset.arkBpMarket || "TW";
+      state.arkBPLevelInput = null; // 水位欄跟著市場換
       renderCloudSnapshot();
     });
   });
@@ -9362,18 +9397,36 @@ function renderCloudSnapshot() {
     });
   });
   els.cloudSnapshot.querySelector("#ark-bp-save")?.addEventListener("click", () => saveArkBPRecords());
-  // 補記以前的日子：換日期就重新帶入那天以前（含）最近的紀錄與位階（v0.53.5）
-  const setArkBPDate = (d) => {
-    const discard = state.arkBPDirty;
-    if (discard && !confirm("這天有修改還沒儲存，確定要換日期？（修改會不見）")) { renderCloudSnapshot(); return; }
-    state.arkBPDate = d && d < today() ? d : "";
-    state.arkRecExpanded.clear();
-    // 丟掉修改要從 Sheet 重讀：改代號「其他日子一起改」動的是記憶體裡的紀錄（重讀時會順便重新帶入）
-    if (discard) { loadBuyingPowerRecords(); return; }
-    arkBPPrefillFromLast();
-    arkRankPrefill();
-    renderCloudSnapshot();
+  // 紀錄頁水位欄（v0.56.0）
+  const refreshArkDerived = () => {
+    const slot = els.cloudSnapshot.querySelector("#ark-bp-derived-slot");
+    if (slot) slot.innerHTML = arkBPDerivedTotalHtml(state.arkBPMarket || "TW");
   };
+  els.cloudSnapshot.querySelector("#ark-bp-level")?.addEventListener("input", (e) => {
+    state.arkBPLevelInput = e.target.value;
+    state.arkBPDirty = true;
+    refreshArkDerived();
+  });
+  els.cloudSnapshot.querySelector("#ark-bp-level-prev")?.addEventListener("click", (e) => {
+    state.arkBPLevelInput = e.currentTarget.dataset.level || "";
+    state.arkBPDirty = true;
+    const inp = els.cloudSnapshot.querySelector("#ark-bp-level");
+    if (inp) inp.value = state.arkBPLevelInput;
+    refreshArkDerived();
+  });
+  // 首頁記錄提醒（v0.56.0）：跳到方舟→紀錄→該市場、日期設成那場；休市略過＝這場不再提醒
+  els.cloudSnapshot.querySelectorAll("[data-ark-remind-go]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.dashboardTab = "ark";
+      state.arkBPSubTab = "record";
+      if (state.arkBPMarket !== btn.dataset.arkRemindGo) { state.arkBPMarket = btn.dataset.arkRemindGo; state.arkBPLevelInput = null; }
+      state.tabFadePending = true;
+      setArkBPDate(btn.dataset.date || "");
+    });
+  });
+  els.cloudSnapshot.querySelectorAll("[data-ark-remind-skip]").forEach((btn) => {
+    btn.addEventListener("click", () => { arkRemindSkip(btn.dataset.arkRemindSkip); renderCloudSnapshot(); });
+  });
   els.cloudSnapshot.querySelector("#ark-bp-date")?.addEventListener("change", (e) => setArkBPDate(e.target.value));
   els.cloudSnapshot.querySelector("#ark-bp-date-today")?.addEventListener("click", () => setArkBPDate(""));
   els.cloudSnapshot.querySelector("#ark-bp-add-blank")?.addEventListener("click", () => {
