@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.0";
+const APP_VERSION = "v0.57.1";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -5613,6 +5613,12 @@ function renderAssetTrendCard() {
   }
   const r = cfg.range === "1M" ? 2.5 : 1.5;
   const dots = pts.map((p, i) => `<circle cx="${xPos(i)}" cy="${yPos(p.v)}" r="${r}" fill="${stacked ? "var(--amber)" : color}" data-tooltip="${escapeHtml(tipOf(p))}"><title>${escapeHtml(tipOf(p))}</title></circle>`).join("");
+  // 點圖上任一處 → 換算成最近的日期顯示當天資產（v0.57.1）：每個點一條整欄透明點擊區＋虛線標出選到哪天
+  const hits = pts.map((p, i) => {
+    const x0 = i === 0 ? PL : (xPos(i - 1) + xPos(i)) / 2, x1 = i === last ? W - PR : (xPos(i) + xPos(i + 1)) / 2;
+    return `<rect class="asset-hit" x="${x0}" y="${PT}" width="${Math.max(0, x1 - x0)}" height="${cH}" fill="transparent" data-x="${xPos(i)}" data-tooltip="${escapeHtml(tipOf(p))}"/>`;
+  }).join("");
+  const guide = `<line class="asset-guide" x1="0" x2="0" y1="${PT}" y2="${PT + cH}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" visibility="hidden" pointer-events="none"/>`;
   const missDays = pts.filter((p) => p.missing).map((p) => p.date.slice(5).replace("-", "/"));
   const zoomCtl = mk === "ALL" ? `<label class="asset-zoom"><input type="checkbox" data-asset-zoom ${cfg.zoom ? "checked" : ""}> 放大起伏（只看總額）</label>` : "";
   return wrap(`
@@ -5621,7 +5627,7 @@ function renderAssetTrendCard() {
       <div class="asset-tiles">${tiles}</div>
       <div class="asset-legend-row"><span>${legend}</span>${zoomCtl}</div>
       <div class="level-chart-container asset-chart" style="position:relative">
-        <svg viewBox="0 0 ${W} ${H}" class="level-chart-svg" aria-label="總資產趨勢">${yLines}${xLabels}${marks}${dots}</svg>
+        <svg viewBox="0 0 ${W} ${H}" class="level-chart-svg" aria-label="總資產趨勢">${yLines}${xLabels}${marks}${guide}${dots}${hits}</svg>
       </div>
       ${stacked ? '<p class="muted-text asset-note">堆疊從 0 開始（色塊厚度＝金額），起伏會顯得平；要看漲跌勾「放大起伏」</p>' : ""}
       ${missDays.length ? `<p class="ark-bp-warn-note">⚠️ ${missDays.length} 天有股票缺收盤價，當天總資產偏低：${missDays.slice(-8).join("、")}${missDays.length > 8 ? "…" : ""}</p>` : ""}
@@ -9076,7 +9082,7 @@ function renderCloudSnapshot() {
   // 所有趨勢圖 tooltip：用事件委派取代靜態綁定，確保動態插入的個股走勢圖也生效
   els.cloudSnapshot.addEventListener("click", (e) => {
     const dot = e.target.closest
-      ? (e.target.closest("circle[data-tooltip]") || e.target.closest("polygon[data-tooltip]"))
+      ? (e.target.closest("circle[data-tooltip]") || e.target.closest("polygon[data-tooltip]") || e.target.closest("rect.asset-hit"))
       : (["circle", "polygon"].includes(e.target.tagName) && e.target.dataset.tooltip ? e.target : null);
     if (!dot?.dataset.tooltip) return;
     const container = dot.closest(".shares-chart-container") || dot.closest(".level-chart-container") || dot.closest(".ark-bp-trend-box");
@@ -9085,7 +9091,11 @@ function renderCloudSnapshot() {
     if (!tip) { tip = document.createElement("div"); tip.className = "chart-tooltip"; container.appendChild(tip); }
     tip.textContent = dot.dataset.tooltip;
     tip.style.display = "block";
-    setTimeout(() => { tip.style.display = "none"; }, 2500);
+    // 總資產趨勢：虛線移到選到的日期（v0.57.1）
+    const guide = dot.classList?.contains("asset-hit") ? container.querySelector(".asset-guide") : null;
+    if (guide) { guide.setAttribute("x1", dot.dataset.x); guide.setAttribute("x2", dot.dataset.x); guide.setAttribute("visibility", "visible"); }
+    clearTimeout(tip._hideTimer); // 連點時舊的計時不要把新的提示提早收掉
+    tip._hideTimer = setTimeout(() => { tip.style.display = "none"; guide?.setAttribute("visibility", "hidden"); }, guide ? 4000 : 2500);
     e.stopPropagation();
   }, { capture: false });
   els.cloudSnapshot.querySelectorAll("[data-level-range]").forEach((btn) => {
