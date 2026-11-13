@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.54.12";
+const APP_VERSION = "v0.55.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7355,7 +7355,7 @@ const ARK_BT_STRATEGIES = [
   { key: "yellow", label: "黃色股數", kind: "yellow", color: "var(--chart-1)" },
   { key: "risk100", label: "風控 100%", kind: "risk", riskDiv: 10, color: "var(--chart-2)" },
   { key: "risk50", label: "風控 50%", kind: "risk", riskDiv: 20, color: "var(--chart-3)" },
-  // 只有美股（v0.52.2）：每天價值區各買 1 股／100 美元，賣位階最高（今日記錄「庫存位階最高」）
+  // 只有美股（v0.52.2）：每天價值區各買 1 股／100 美元，賣位階最高（今日記錄「庫存位階最高」）；買進總額不超過閒錢（v0.55.0）
   { key: "oneShare", label: "1 股", kind: "oneShare", color: "var(--chart-4)", usOnly: true },
   { key: "usd100", label: "100 美元", kind: "usd100", color: "var(--chart-5)", usOnly: true },
 ];
@@ -7464,12 +7464,12 @@ function renderArkBacktestTab() {
     `起點 ${start.date}${mkt === "US" ? "（開始記位階後）" : ""}，起始資金 ${cur}${formatNumber(start.capital, 0)}（推算總資產，快照 ${start.snapDate.slice(5)}${mkt === "US" ? `，匯率 ${start.fx.toFixed(2)}` : ""}${start.missing ? `，⚠️ ${start.missing} 支缺收盤價未計入` : ""}）`,
     `各戰法從起點當天的實際持股（${start.holdings.length} 支）開始；共 ${days.length} 個記錄日；只算${mkt === "US" ? "產業" : "ETF"}價值區；以當天收盤價成交`,
     over10.length ? `⚠️ 價值區超過 10 檔的日子：${over10.join("、")}` : "",
-    noLevel ? `⚠️ ${noLevel} 天缺水位，水位類戰法當天不交易` : "",
+    noLevel ? `⚠️ ${noLevel} 天缺水位，當天不交易` : "",
     mkt === "US" ? (() => {
       const fx = results.find((x) => x.key === "oneShare")?.r.series || [];
-      const miss = fx.filter((p) => p.rankMissing).length, short = fx.filter((p) => p.rankShort).length;
+      const miss = fx.filter((p) => p.rankMissing).length, short = fx.filter((p) => p.lowRetSold).length;
       const none = fx.filter((p) => p.rankNoneHeld).length;
-      return miss || short || none ? `⚠️ 1 股／100 美元：${[miss ? `${miss} 天沒記位階（當天不賣）` : "", none ? `${none} 天記的位階都不在持股（沒賣到，可多記幾支）` : "", short ? `${short} 天記的位階不夠賣（錢不夠就少買）` : ""].filter(Boolean).join("、")}` : "";
+      return miss || short || none ? `⚠️ 1 股／100 美元：${[miss ? `${miss} 天沒記位階（閒錢不夠才賣報酬率最低）` : "", none ? `${none} 天記的位階都不在持股（沒賣到，可多記幾支）` : "", short ? `${short} 天位階賣完閒錢仍不夠，改賣報酬率最低` : ""].filter(Boolean).join("、")}` : "";
     })() : "",
   ].filter(Boolean);
   return `
@@ -7552,7 +7552,7 @@ function arkBTDetailHtml(results, dates, cur, mkt) {
       <span>總值 <b>${cur}${formatNumber(day.value, 0)}</b></span>
       <span>現金 <b>${cur}${formatNumber(day.cash, 0)}</b></span>
       <span>持股 <b>${cur}${formatNumber(mv, 0)}</b></span>
-      <span>水位 ${day.level || "—"}%</span><span>當天閒錢 ${cur}${formatNumber(day.idle || 0, 0)}${res.usOnly ? "（僅供參考，不影響買賣）" : ""}</span>
+      <span>水位 ${day.level || "—"}%</span><span>當天閒錢 ${cur}${formatNumber(day.idle || 0, 0)}</span>
       ${res.usOnly && day.idle < 0 ? `<span class="ark-bt-over">超出建議持股 ${cur}${formatNumber(-day.idle, 0)}</span>` : ""}
     </div>
     ${(day.trades || []).length ? "" : `<p class="muted-text ark-bt-note">當天沒有交易</p>`}

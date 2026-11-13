@@ -165,7 +165,7 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
   let cash = Number(startCapital) || 0;
   const holdings = new Map(); // symbol → { shares, cost, lastPrice }
   const firstDate = days?.[0]?.date;
-  const fixedKind = kind === "oneShare" || kind === "usd100"; // 1 股／100 美元：不看水位，賣出只依位階
+  const fixedKind = kind === "oneShare" || kind === "usd100"; // 1 股／100 美元：固定買量，買進總額不超過閒錢
   for (const ih of initialHoldings || []) {
     const shares = Number(ih.shares) || 0;
     const p = firstDate ? priceAt(ih.symbol, firstDate) : null;
@@ -190,7 +190,7 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
   };
   for (const day of days || []) {
     const w = Number(day.level) / 100;
-    if (!(w > 0) && !fixedKind) { series.push({ date: day.date, value: cash + mvOf(day.date), skipped: "缺水位" }); continue; }
+    if (!(w > 0)) { series.push({ date: day.date, value: cash + mvOf(day.date), skipped: "缺水位" }); continue; }
     let mv = mvOf(day.date);
     const total = cash + mv;
     let sold = 0, bought = 0;
@@ -208,29 +208,50 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
     }
     const idle = w * total - mv;
     if (fixedKind) {
-      // 1 股／100 美元戰法（v0.52.2）：每天價值區各買 1 股／100 美元；每天賣掉持股中位階最高的（整筆），
-      // 錢不夠買就再賣位階第 2 高，依此類推。不看水位。位階只有 Sin 記的最高 2 支 → 不夠時標 rankShort
+      // 1 股／100 美元戰法（v0.52.2；v0.55.0 加閒錢上限）：每天價值區各買 1 股／100 美元，買進總額不可超過閒錢。
+      // 每天先賣持股中位階最高的 1 支（整筆）；閒錢仍不夠買 → 再賣位階第 2 高…；
+      // 記的位階（Sin 只記最高 2 支）賣完還不夠 → 報酬率最低先整筆賣，直到閒錢夠（Sin 定 2026-11-13）
+      // 持股賣光仍不夠 → 照價值區順序買，買不起的跳過
+      let fmv = mv;
       const ranks = (day.ranks || []).filter((sym) => holdings.has(sym));
-      const sellOne = () => {
-        const sym = ranks.shift(); if (!sym) return false;
+      const sellSym = (sym) => {
         const h = holdings.get(sym); const p = px(sym, day.date) || 0;
-        cash += h.shares * p; holdings.delete(sym); sold++;
+        cash += h.shares * p; fmv -= h.shares * p; holdings.delete(sym); sold++;
         trades.push({ type: "sell", symbol: sym, qty: h.shares, price: p, ret: p / (h.cost / h.shares) - 1 });
-        return true;
       };
+      const sellRank = () => {
+        while (ranks.length && !holdings.has(ranks[0])) ranks.shift();
+        const sym = ranks.shift(); if (!sym) return false;
+        sellSym(sym); return true;
+      };
+      const sellLowest = () => {
+        let best = null, bestRet = Infinity;
+        for (const [sym, h] of holdings) {
+          const r = (px(sym, day.date) || 0) / (h.cost / h.shares) - 1;
+          if (r < bestRet) { bestRet = r; best = sym; }
+        }
+        if (!best) return false;
+        sellSym(best); return true;
+      };
+      const fIdle = () => w * total - fmv;
       const orders = (day.picks || []).map((pk) => ({ ...pk, p: priceAt(pk.symbol, day.date) })).filter((pk) => pk.p > 0)
         .map((pk) => ({ ...pk, qty: kind === "oneShare" ? 1 : floorToUnit(100 / pk.p, unit) }))
         .filter((o) => o.qty > 0);
       const need = orders.reduce((sm, o) => sm + o.qty * o.p, 0);
-      let rankMissing = !(day.ranks || []).length, rankShort = false;
+      const rankMissing = !(day.ranks || []).length;
       // 有記位階、但記的標的這個戰法都沒持有 → 當天賣不到（輪動快時常見，用來判斷要不要多記幾支，v0.53.2）
       const rankNoneHeld = !rankMissing && ranks.length === 0;
-      if (!rankMissing) sellOne();
-      while (cash + 1e-9 < need) { if (!sellOne()) { rankShort = true; break; } }
+      let lowRetSold = false, idleShort = false;
+      if (!rankMissing) sellRank();
+      while (Math.min(fIdle(), cash) + 1e-9 < need) {
+        if (sellRank()) continue;
+        if (sellLowest()) { lowRetSold = true; continue; }
+        idleShort = true; break;
+      }
       for (const o of orders) {
         const c = o.qty * o.p;
-        if (c > cash + 1e-9) { rankShort = true; continue; }
-        cash -= c; bought++;
+        if (c > Math.min(fIdle(), cash) + 1e-9) { idleShort = true; continue; }
+        cash -= c; fmv += c; bought++;
         trades.push({ type: "buy", symbol: o.symbol, qty: o.qty, price: o.p });
         const h = holdings.get(o.symbol) || { shares: 0, cost: 0, lastPrice: o.p };
         h.shares += o.qty; h.cost += c; h.lastPrice = o.p;
@@ -240,7 +261,8 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
         const price = px(symbol, day.date) || 0;
         return { symbol, shares: h.shares, avgCost: h.cost / h.shares, price, value: h.shares * price };
       }).sort((a, b) => b.value - a.value);
-      series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle, level: Number(day.level), positions, trades, rankMissing, rankShort, rankNoneHeld });
+      // idle：交易後的閒錢（跟明細的現金／持股同一時點）
+      series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle: fIdle(), level: Number(day.level), positions, trades, rankMissing, rankNoneHeld, lowRetSold, idleShort });
       continue;
     }
     if (idle > 0) {
