@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.56.0";
+const APP_VERSION = "v0.57.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -77,6 +77,7 @@ const state = {
   perfYearExists: true, // 選定年的績效 tab 是否已存在（否則顯示建表）
   manualRows: [{ symbol: "", name: "", shares: "", avgCost: "" }], // 手動輸入逐欄表格的列
   levelChartRange: "1M",
+  assetChart: { market: "ALL", range: "6M", zoom: false }, // 首頁總資產趨勢（v0.57.0）
   levelChartMarket: "TW",
   adjustSort: "severity", // 待關注調節清單排序：severity/perfDrop/relWeak/held/curRate
   adjustFilter: "all",    // 待關注調節清單篩選：all/weak/perf/stall
@@ -5496,6 +5497,137 @@ function renderTargetLevelChart(history) {
   `;
 }
 
+// ===== 首頁總資產趨勢（v0.57.0）=====
+// 每個方舟記錄日：總資產＝(當天以前最近快照股數×當天收盤＋閒錢)÷水位（水位＝當天以前最近一筆，同回測）
+// 全部＝台股＋美股換台幣，只畫兩邊同一天都有的日子（Sin 定：甲）；收盤跟回測共用
+function buildAssetSeries(mkt) {
+  const recs = state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === mkt);
+  const dates = [...new Set(recs.map((r) => r.date))].sort();
+  const snaps = (state.cloudHistory.snapshots || []).filter((sn) => normalizeMarketKey(sn.market) === mkt && sn.date)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const out = [];
+  for (const d of dates) {
+    const idle = recs.find((r) => r.date === d)?.idleCash || 0;
+    const level = targetLevelFromHistory(mkt, d);
+    const snap = snaps.find((sn) => sn.date <= d);
+    if (!snap) continue;
+    const pos = (state.cloudHistory.positions || []).filter((p) => p.snapshotId === snap.snapshotId && Number(p.shares) > 0);
+    let held = 0, missing = 0;
+    for (const p of pos) { const c = historicalClose(p.symbol, d); if (c > 0) held += Number(p.shares) * c; else missing++; }
+    const fx = mkt === "US" ? historicalUsdTwdRate(d) : 1;
+    const total = window.derivedTotalAsset({ held, idleTwd: idle, levelPct: level, fx });
+    if (total === null) continue;
+    out.push({ date: d, total, fx, missing });
+  }
+  return out;
+}
+
+function assetMoney(v, cur) { return `${cur}${formatNumber(Math.round(v), 0)}`; }
+function assetShort(v) { return v >= 1e6 ? `${(v / 1e6).toFixed(2)}M` : `${Math.round(v / 1e3)}k`; }
+
+function renderAssetTrendCard() {
+  const cfg = state.assetChart;
+  const wrap = (body) => `
+    <section class="dashboard-card asset-trend-card">
+      <div class="card-heading">
+        <h3>總資產趨勢</h3>
+        <span>推算：(持股市值＋閒錢)÷水位；全部＝美股換台幣相加</span>
+      </div>
+      ${body}
+    </section>`;
+  if (!state.auth?.authorized) return "";
+  if (!state.arkBPLoaded) return wrap('<p class="muted-text">載入方舟紀錄中…</p>');
+  const pending = ["TW", "US"].filter((m) => state.arkBTCloses[m] !== "done");
+  if (pending.length) {
+    pending.forEach((m) => { if (state.arkBTCloses[m] === "idle") setTimeout(() => fetchArkBacktestCloses(m), 0); });
+    return wrap('<p class="muted-text">載入歷史收盤價中…</p>');
+  }
+  const tw = buildAssetSeries("TW"), us = buildAssetSeries("US");
+  const days = { "1M": 31, "6M": 183, "1Y": 365 }[cfg.range] || 183;
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const mk = cfg.market;
+  let pts, cur;
+  if (mk === "TW") { pts = tw.map((p) => ({ ...p, v: p.total })); cur = "NT$"; }
+  else if (mk === "US") { pts = us.map((p) => ({ ...p, v: p.total })); cur = "US$"; }
+  else { pts = window.combineAssetSeries(tw, us).map((p) => ({ ...p, v: p.total })); cur = "NT$"; }
+  pts = pts.filter((p) => p.date >= cutoff);
+  const btn = (attr, val, label, on) => `<button class="level-range-btn${on ? " is-active" : ""}" type="button" ${attr}="${val}">${label}</button>`;
+  const topbar = `
+      <div class="level-chart-topbar">
+        <div class="level-range-btns">${[["ALL", "全部（堆疊）"], ["TW", "台股"], ["US", "美股"]].map(([k, l]) => btn("data-asset-market", k, l, k === mk)).join("")}</div>
+        <div class="level-range-btns">${["1M", "6M", "1Y"].map((r) => btn("data-asset-range", r, r, r === cfg.range)).join("")}</div>
+      </div>`;
+  if (pts.length < 2) {
+    const why = mk === "ALL" ? "台股、美股同一天都有記（閒錢不是 10 萬、有水位、當天以前有快照）的日子" : "推算得出總資產的記錄日";
+    return wrap(`<div class="level-chart-wrap">${topbar}<p class="muted-text">這段期間${why}不到 2 天，畫不出趨勢。</p></div>`);
+  }
+  const a = pts[0], z = pts[pts.length - 1];
+  const chg = (x, y) => { const v = (y / x - 1) * 100; return `<span class="${v >= 0 ? "is-pos" : "is-neg"}">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</span>`; };
+  const tile = (label, val, sub = "") => `<div class="asset-tile"><div class="asset-tile-label">${label}</div><div class="asset-tile-value">${val}</div><div class="asset-tile-sub">${sub}</div></div>`;
+  const stacked = mk === "ALL" && !cfg.zoom;
+  let tiles;
+  if (mk === "ALL") {
+    tiles = tile("全部總資產", assetMoney(z.total, "NT$"), chg(a.total, z.total))
+      + tile("台股", assetMoney(z.tw, "NT$"), `${chg(a.tw, z.tw)} <span class="muted-text">占 ${Math.round(z.tw / z.total * 100)}%</span>`)
+      + tile("美股（換台幣）", assetMoney(z.usTwd, "NT$"), `${chg(a.usTwd, z.usTwd)} <span class="muted-text">占 ${Math.round(z.usTwd / z.total * 100)}%</span>`);
+  } else {
+    const vs = pts.map((p) => p.v);
+    tiles = tile(`${mk === "TW" ? "台股" : "美股"}總資產`, assetMoney(z.v, cur), chg(a.v, z.v))
+      + tile("期間最高", assetMoney(Math.max(...vs), cur)) + tile("期間最低", assetMoney(Math.min(...vs), cur));
+  }
+  // SVG（樣式同建議水位趨勢）
+  const W = 600, H = 190, PL = 44, PR = 8, PT = 8, PB = 26, cW = W - PL - PR, cH = H - PT - PB;
+  const vals = pts.map((p) => p.v);
+  let minV, maxV;
+  if (stacked) { minV = 0; maxV = Math.max(...vals) * 1.05; }
+  else { const lo = Math.min(...vals), hi = Math.max(...vals), pad = (hi - lo) * 0.1 || hi * 0.02; minV = lo - pad; maxV = hi + pad; }
+  const xPos = (i) => PL + (i / (pts.length - 1)) * cW;
+  const yPos = (v) => PT + (1 - (v - minV) / (maxV - minV || 1)) * cH;
+  const yLines = [0, 1, 2, 3, 4].map((k) => {
+    const v = minV + (maxV - minV) * k / 4, y = yPos(v);
+    return `<line x1="${PL}" y1="${y}" x2="${W - PR}" y2="${y}" stroke="var(--line)" stroke-width="0.5"/><text x="${PL - 4}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--muted)">${assetShort(v)}</text>`;
+  }).join("");
+  const maxLabels = Math.min(pts.length, cfg.range === "1Y" ? 12 : cfg.range === "6M" ? 6 : 5);
+  const step = Math.max(1, Math.floor(pts.length / maxLabels));
+  const last = pts.length - 1;
+  const xLabels = pts.map((p, i) => (i === last || (i % step === 0 && last - i >= step / 2)) ? `<text x="${xPos(i)}" y="${H - 4}" text-anchor="${i === last ? "end" : i === 0 ? "start" : "middle"}" font-size="9" fill="var(--muted)">${p.date.slice(5).replace("-", "/")}</text>` : "").join("");
+  const line = (key, color) => `<polyline points="${pts.map((p, i) => `${xPos(i)},${yPos(p[key])}`).join(" ")}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`;
+  const area = (topKey, botKey, color) => {
+    const top = pts.map((p, i) => `${xPos(i)},${yPos(p[topKey])}`);
+    const bot = pts.map((p, i) => `${xPos(i)},${yPos(botKey ? p[botKey] : minV)}`).reverse();
+    return `<polygon points="${[...top, ...bot].join(" ")}" fill="${color}" fill-opacity="0.3" stroke="none"/>`;
+  };
+  const tipOf = (p) => {
+    const miss = p.missing ? `\n⚠️ ${p.missing} 支缺收盤價（偏低）` : "";
+    if (mk === "ALL") return `${p.date}\n全部 ${assetMoney(p.total, "NT$")}\n台股 ${assetMoney(p.tw, "NT$")}\n美股 ${assetMoney(p.usTwd, "NT$")}（${assetMoney(p.us, "US$")} × ${p.fx.toFixed(2)}）${miss}`;
+    return `${p.date}\n${mk === "TW" ? "台股" : "美股"} ${assetMoney(p.v, cur)}${miss}`;
+  };
+  const color = mk === "TW" ? "var(--blue)" : mk === "US" ? "var(--amber)" : "var(--green)";
+  let marks, legend;
+  if (stacked) {
+    marks = area("tw", null, "var(--blue)") + area("total", "tw", "var(--amber)") + line("tw", "var(--blue)") + line("total", "var(--amber)");
+    legend = `<span class="level-legend-dot" style="background:var(--blue)"></span>台股 <span class="level-legend-dot" style="background:var(--amber)"></span>美股（換台幣）`;
+  } else {
+    marks = area("v", null, color) + line("v", color);
+    legend = `<span class="level-legend-dot" style="background:${color}"></span>${mk === "ALL" ? "全部總資產（台幣）" : mk === "TW" ? "台股（台幣）" : "美股（美元）"}`;
+  }
+  const r = cfg.range === "1M" ? 2.5 : 1.5;
+  const dots = pts.map((p, i) => `<circle cx="${xPos(i)}" cy="${yPos(p.v)}" r="${r}" fill="${stacked ? "var(--amber)" : color}" data-tooltip="${escapeHtml(tipOf(p))}"><title>${escapeHtml(tipOf(p))}</title></circle>`).join("");
+  const missDays = pts.filter((p) => p.missing).map((p) => p.date.slice(5).replace("-", "/"));
+  const zoomCtl = mk === "ALL" ? `<label class="asset-zoom"><input type="checkbox" data-asset-zoom ${cfg.zoom ? "checked" : ""}> 放大起伏（只看總額）</label>` : "";
+  return wrap(`
+    <div class="level-chart-wrap">
+      ${topbar}
+      <div class="asset-tiles">${tiles}</div>
+      <div class="asset-legend-row"><span>${legend}</span>${zoomCtl}</div>
+      <div class="level-chart-container asset-chart" style="position:relative">
+        <svg viewBox="0 0 ${W} ${H}" class="level-chart-svg" aria-label="總資產趨勢">${yLines}${xLabels}${marks}${dots}</svg>
+      </div>
+      ${stacked ? '<p class="muted-text asset-note">堆疊從 0 開始（色塊厚度＝金額），起伏會顯得平；要看漲跌勾「放大起伏」</p>' : ""}
+      ${missDays.length ? `<p class="ark-bp-warn-note">⚠️ ${missDays.length} 天有股票缺收盤價，當天總資產偏低：${missDays.slice(-8).join("、")}${missDays.length > 8 ? "…" : ""}</p>` : ""}
+    </div>`);
+}
+
 function renderLayoutDeltaTable(points) {
   if (!points.length) return "<p class=\"muted-text\">目前還沒有快照差異可計算。</p>";
   return ["TW", "US"].map((market) => {
@@ -7402,7 +7534,7 @@ async function fetchArkBacktestCloses(mkt) {
     } catch (e) { console.warn("fetchArkBacktestCloses", e); }
   }));
   state.arkBTCloses[mkt] = "done";
-  if (state.dashboardTab === "ark") renderCloudSnapshot();
+  if (state.dashboardTab === "ark" || state.dashboardTab === "home") renderCloudSnapshot(); // 首頁總資產趨勢也用（v0.57.0）
 }
 
 // 回測輸入：起點＝第一個「閒錢不是 10 萬」且推算得出總資產的記錄日；起始資金＝推算總資產（美股換成美元）
@@ -8408,7 +8540,8 @@ function renderCloudSnapshot() {
         </div>
         ${renderTargetLevelChart(state.targetLevelHistory)}
       </section>
-    </div>` : ""}
+    </div>
+    ${renderAssetTrendCard()}` : ""}
     ${state.homeSubTab === "analysis" ? `
     <section class="dashboard-card">
       <div class="card-heading">
@@ -8961,6 +9094,10 @@ function renderCloudSnapshot() {
       renderCloudSnapshot();
     });
   });
+  // 首頁總資產趨勢（v0.57.0）
+  els.cloudSnapshot.querySelectorAll("[data-asset-market]").forEach((btn) => btn.addEventListener("click", () => { state.assetChart.market = btn.dataset.assetMarket; renderCloudSnapshot(); }));
+  els.cloudSnapshot.querySelectorAll("[data-asset-range]").forEach((btn) => btn.addEventListener("click", () => { state.assetChart.range = btn.dataset.assetRange; renderCloudSnapshot(); }));
+  els.cloudSnapshot.querySelector("[data-asset-zoom]")?.addEventListener("change", (e) => { state.assetChart.zoom = e.target.checked; renderCloudSnapshot(); });
   els.cloudSnapshot.querySelectorAll("[data-level-market]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.levelChartMarket = btn.dataset.levelMarket;

@@ -317,3 +317,21 @@ export function marketSessionDate(market, nowMs = Date.now()) {
   while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
+
+// ===== 總資產趨勢（首頁，v0.57.0）=====
+// 推算總資產（同戰法回測計畫）：總資產＝(持股市值＋閒錢)÷水位；閒錢一律台幣 → 美股持股先 ×fx 換台幣，結果再 ÷fx 回原幣
+// 閒錢剛好 10 萬＝標準化基準、不是實際閒錢 → 不推算（回 null）
+export function derivedTotalAsset({ held, idleTwd, levelPct, fx = 1 }) {
+  const w = Number(levelPct) / 100, idle = Number(idleTwd), h = Number(held) || 0, r = Number(fx) || 1;
+  if (!(w > 0) || !(idle > 0) || idle === 100000) return null;
+  return (h * r + idle) / w / r;
+}
+// 全部（Sin 定：甲＝只畫台股、美股同一天都有的日子）：all＝台股＋美股×當天匯率（台幣）
+export function combineAssetSeries(tw, us) {
+  const usBy = new Map((us || []).map((p) => [p.date, p]));
+  return (tw || []).filter((p) => usBy.has(p.date)).map((p) => {
+    const u = usBy.get(p.date);
+    const usTwd = u.total * (u.fx || 1);
+    return { date: p.date, tw: p.total, us: u.total, usTwd, fx: u.fx || 1, total: p.total + usTwd, missing: (p.missing || 0) + (u.missing || 0) };
+  });
+}

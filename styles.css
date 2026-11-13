@@ -4303,3 +4303,17 @@ button.ark-bp-cat-badge { border: 0; cursor: pointer; font: inherit; }
 .ark-remind-text { color: var(--amber); font-weight: 600; }
 .ark-remind-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .ark-remind-actions .button { padding: 6px 12px; min-height: 0; }
+
+/* 首頁總資產趨勢（v0.57.0） */
+.asset-trend-card { margin-top: 16px; }
+.asset-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 8px 0 10px; }
+.asset-tile { background: var(--panel); border-radius: var(--radius-card); padding: 10px 12px; }
+.asset-tile-label { font-size: var(--fs-caption); color: var(--muted); }
+.asset-tile-value { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.asset-tile-sub { font-size: var(--fs-caption); min-height: 1em; }
+.asset-legend-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; font-size: var(--fs-caption); color: var(--muted); }
+.asset-zoom { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.asset-chart .chart-tooltip { white-space: pre-line; }
+.asset-note { font-size: var(--fs-caption); margin: 4px 0 0; }
+.asset-tile .is-pos { color: var(--red); }
+.asset-tile .is-neg { color: var(--green); }
