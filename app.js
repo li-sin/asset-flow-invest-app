@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.1";
+const APP_VERSION = "v0.57.2";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -123,7 +123,6 @@ const state = {
   captureMode: "ocr",
   pasteParsed: null,
   pasteMeta: { date: "", market: "TW", userTouched: false },
-  levelUpdateDate: {}, // 1a：水位卡各市場選定的更新日期（預設今天）
   quotesLoading: false,
   quotesFailed: false,
   homeCalendar: { year: new Date().getFullYear(), month: new Date().getMonth(), selectedDate: "" },
@@ -393,10 +392,6 @@ function loadTargetLevels() {
     console.warn("target levels", error);
     return {};
   }
-}
-
-function saveTargetLevels() {
-  localStorage.setItem(TARGET_LEVEL_STORAGE_KEY, JSON.stringify(state.targetLevels));
 }
 
 const FIRST_BUY_DATES_KEY = "assetflow_invest_first_buy_dates_v1";
@@ -743,25 +738,6 @@ function targetLevelForMarket(market, snapshotDate = "") {
   if (sheetValue !== null) return sheetValue;
   const value = state.targetLevels[key];
   return Number.isFinite(value) ? value : null;
-}
-
-function updateTargetLevel(market, value) {
-  const key = normalizeMarketKey(market);
-  if (!["TW", "US"].includes(key)) return false;
-  const text = String(value ?? "").replace("%", "").trim();
-  if (!text) {
-    delete state.targetLevels[key];
-    saveTargetLevels();
-    return true;
-  }
-  const number = Number(text);
-  if (!Number.isFinite(number) || number < 0 || number > 100) {
-    alert("市場建議水位請輸入 0 到 100 的百分比");
-    return false;
-  }
-  state.targetLevels[key] = number;
-  saveTargetLevels();
-  return true;
 }
 
 async function saveTargetLevelToSheet(market, level, dateStr) {
@@ -4332,22 +4308,6 @@ async function handleBrokerFile(file) {
   }
 }
 
-// 手動輸入：每行「代號 股數 均價」（空白/逗號分隔），手機友善（不需 Tab 表格）
-function parseManualRows(text) {
-  const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const rows = [];
-  for (const line of lines) {
-    const parts = line.split(/[\s,]+/).filter(Boolean);
-    if (parts.length < 2) continue;
-    const symbol = parts[0].replace(/\*+$/, "").toUpperCase();
-    const shares = parseFloat((parts[1] || "").replace(/,/g, "")) || 0;
-    const avgCost = parseFloat((parts[2] || "").replace(/[,$]/g, "")) || 0;
-    if (!symbol || shares <= 0) continue;
-    rows.push({ symbol, name: resolveSymbolName(symbol), shares, avgCost });
-  }
-  return rows.length ? rows : null;
-}
-
 // 手動逐欄表格 → 存快照（重用 savePasteSnapshot 路徑）
 async function saveManualSnapshot() {
   if (snapshotSaveInFlight) return; // 防連點：被旗標擋下時不可清掉下方 manualRows
@@ -7314,8 +7274,8 @@ function arkBPDerivedTotalHtml(mkt) {
   }
   // 方舟紀錄的閒錢一律填台幣（美股也是）→ 美股持股（美元報價）換台幣再相加，避免幣別混算（v0.51.1）
   const rate = mkt === "US" ? getUsdTwdRate() : 1;
+  const total = window.derivedTotalAsset({ held, idleTwd: cash, levelPct: level, fx: rate }) * rate; // 台幣（公式共用 logic.js，v0.57.2）
   held *= rate;
-  const total = (held + cash) / (level / 100);
   const snapDate = pos[0]?.date || "";
   const notes = [`持股 ${formatNumber(held, 0)}`, `水位 ${level}%`];
   if (mkt === "US") notes.push(`匯率 ${rate.toFixed(2)}，約 US$${formatNumber(total / rate, 0)}`);
@@ -7565,8 +7525,7 @@ function buildArkBacktestInput(mkt) {
     let held = 0, missing = 0;
     for (const p of pos) { const c = historicalClose(p.symbol, d); if (c > 0) held += Number(p.shares) * c; else missing++; }
     const fx = fxAt(d);
-    const totalTwd = (held * fx + idle) / (level / 100);
-    start = { date: d, capital: totalTwd / fx, snapDate: snap.date, missing, fx,
+    start = { date: d, capital: window.derivedTotalAsset({ held, idleTwd: idle, levelPct: level, fx }), // 原幣（公式共用 logic.js，v0.57.2） snapDate: snap.date, missing, fx,
       holdings: pos.map((p) => ({ symbol: p.symbol, shares: Number(p.shares), avgCost: Number(p.avgCost) || 0 })) };
     break;
   }
