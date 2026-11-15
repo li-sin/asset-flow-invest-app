@@ -329,10 +329,13 @@ export function marketSessionDate(market, nowMs = Date.now()) {
 // ===== 總資產趨勢（首頁，v0.57.0）=====
 // 推算總資產（同戰法回測計畫）：總資產＝(持股市值＋閒錢)÷水位；閒錢一律台幣 → 美股持股先 ×fx 換台幣，結果再 ÷fx 回原幣
 // 閒錢剛好 10 萬＝標準化基準、不是實際閒錢 → 不推算（回 null）
+// 閒錢可以是負數（v0.57.11，Sin：方舟顯示負數＝超過水位要調節）→ 照算，總資產會比持股÷水位少；
+// 0／空白＝沒填（舊資料空格讀進來就是 0，分不出真的 0）→ 不推算
 export function derivedTotalAsset({ held, idleTwd, levelPct, fx = 1 }) {
   const w = Number(levelPct) / 100, idle = Number(idleTwd), h = Number(held) || 0, r = Number(fx) || 1;
-  if (!(w > 0) || !(idle > 0) || idle === 100000) return null;
-  return (h * r + idle) / w / r;
+  if (!(w > 0) || !Number.isFinite(idle) || idle === 0 || idle === 100000) return null;
+  const total = (h * r + idle) / w / r;
+  return total > 0 ? total : null;
 }
 // 買賣前的快照（v0.57.5）：Sin 的閒錢是當天開盤前、還沒買賣時記的 → 推算總資產要配「日期早於當天」的最新一份快照
 // （當天的快照是買賣後的，配開盤前的閒錢會把當天買賣金額多算／少算一次）；找不到回 null

@@ -4252,3 +4252,11 @@ button.ark-bp-cat-badge { border: 0; cursor: pointer; font: inherit; }
 .ark-cf-add-form { display: grid; grid-template-columns: 140px 110px minmax(0, 1fr) auto; gap: 8px; margin-top: 8px; }
 .ark-cf-add-form input { min-width: 0; }
 @media (max-width: 520px) { .ark-cf-add-form { grid-template-columns: 1fr 1fr; } .ark-cf-add-form input[type="text"] { grid-column: 1 / -1; } }
+
+/* ===== 回測頁「你 vs 各戰法」合併表（v0.57.10）===== */
+.ark-bt-merged-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; font-size: var(--fs-small); }
+.ark-bt-merged-head b { font-size: 15px; }
+.ark-bt-merged tr.is-you td { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.ark-bt-merged tr.is-you td:first-child { border-radius: 6px 0 0 6px; padding-left: 8px; }
+.ark-bt-merged tr.is-you td:last-child { border-radius: 0 6px 6px 0; padding-right: 8px; }
+.ark-bt-merged td.ark-bt-diff { color: var(--muted); font-variant-numeric: tabular-nums; }

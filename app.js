@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.9";
+const APP_VERSION = "v0.57.10";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7664,9 +7664,10 @@ function renderCloudSnapshot() {
     state.arkBPDirty = true;
     state.arkBPIdleTouched = true; // 動過閒錢欄才問出金（v0.57.6）
     // 試算閒錢一律跟著閒錢蓋掉（Sin：避免忘了改回／忘了要按 100 萬），要放大再按「100萬」
-    state.arkBPCalcCash = e.target.value;
+    // 閒錢是負數（超過水位）→ 試算閒錢自動帶 100 萬（Sin 的習慣，價值區股數才算得對，v0.57.11）
+    state.arkBPCalcCash = Number(e.target.value) < 0 ? "1000000" : e.target.value;
     const calcInput = els.cloudSnapshot.querySelector("#ark-bp-calc");
-    if (calcInput) calcInput.value = e.target.value;
+    if (calcInput) calcInput.value = state.arkBPCalcCash;
     const slot = els.cloudSnapshot.querySelector("#ark-bp-derived-slot");
     if (slot) slot.innerHTML = arkBPDerivedTotalHtml(state.arkBPMarket || "TW");
     const cfSlot = els.cloudSnapshot.querySelector("#ark-bp-cf-slot");

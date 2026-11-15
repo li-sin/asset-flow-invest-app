@@ -704,7 +704,7 @@ function bindArkCashFlowEvents(root) {
 let _arkBPLastPositions = [];
 function arkBPDerivedTotalHtml(mkt) {
   const cash = Number(state.arkBPIdleCash);
-  if (!cash || cash <= 0) return "";
+  if (!cash) return ""; // 負數＝超過水位，照算（v0.57.11）
   if (state.arkBPDate && state.arkBPDate !== today()) return `<div class="ark-bp-derived muted-text">補記以前的日子不推算總資產（持股與報價都是現在的）</div>`;
   if (cash === 100000) return `<div class="ark-bp-derived muted-text">閒錢＝10 萬基準，無法推算總資產（要推算請填方舟的實際建議布局金額）</div>`;
   const level = Number(state.arkBPLevelInput) || targetLevelFromHistory(mkt); // 紀錄頁水位欄有填就用（v0.56.0）
@@ -767,7 +767,7 @@ function switchArkBPMarket(mkt) {
 async function saveArkBPRecords() {
   if (state.arkBPSaving) return;
   const cash = Number(state.arkBPIdleCash);
-  if (!cash || cash <= 0) { alert("請輸入閒錢金額"); return; }
+  if (!cash) { alert("請輸入閒錢金額（方舟顯示負數＝超過水位，就填負數）"); return; } // 負數可以存（v0.57.11）
   const mkt = state.arkBPMarket || "TW";
   const validRows = state.arkBPRows.filter((r) => r.symbol && marketForSymbol(r.symbol) === mkt);
   if (!validRows.length) { alert("至少要有一筆" + (mkt === "TW" ? "台股" : "美股") + "股票資料"); return; }
@@ -1034,12 +1034,6 @@ function renderArkBacktestTab() {
   const unit = mkt === "US" ? 0.01 : 1;
   const results = ARK_BT_STRATEGIES.filter((st) => !st.usOnly || mkt === "US").map((st) => ({ ...st, r: simulateArkStrategy({ days, priceAt, fxAt, startCapital: start.capital, unit, kind: st.kind, riskDiv: st.riskDiv, initialHoldings: start.holdings, cashFlows }) }));
   const pct = (v) => (v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`);
-  const rows = results.map(({ label, color, r }) => `
-    <tr><td><span class="level-legend-dot" style="background:${color}"></span>${label}</td>
-      <td>${cur}${formatNumber(r.finalValue, 0)}</td>
-      <td class="${r.totalReturn >= 0 ? "is-pos" : "is-neg"}">${pct(r.totalReturn)}</td>
-      <td>${r.spanDays >= 30 ? pct(r.annualized) : '<span class="muted-text">未滿 30 天</span>'}</td>
-      <td>${r.holdings.length}</td></tr>`).join("");
   const series = results.map(({ key, color, r }) => ({ key, color, pts: r.series.map((p) => ({ d: p.date, v: Math.round((p.value / start.capital - 1) * 10000) / 100 })) }));
   const chartDates = days.map((d) => d.date);
   const over10 = days.filter((d) => d.picks.length > 10).map((d) => d.date.slice(5));
@@ -1054,6 +1048,11 @@ function renderArkBacktestTab() {
       if (!inRange.length) return "期間沒有出入金（各戰法都假設錢一直留在帳戶裡）";
       return `期間出金 ${cfMoney(mkt, sum(out))}（${out.length} 筆）${dep.length ? `、入金 ${cfMoney(mkt, sum(dep))}（${dep.length} 筆）` : ""}，各戰法同一天扣掉／加回`;
     })(),
+    (() => { // 年化（v0.57.10 從表格移到說明）
+      const sp = results[0]?.r.spanDays || 0;
+      if (sp < 30) return `年化：起點到現在未滿 30 天，先不算`;
+      return `年化（從起點到 ${chartDates[chartDates.length - 1]?.slice(5) || ""} 收盤）：${results.map(({ label, r }) => `${label} ${pct(r.annualized)}`).join("、")}`;
+    })(),
     over10.length ? `⚠️ 價值區超過 10 檔的日子：${over10.join("、")}` : "",
     noLevel ? `⚠️ ${noLevel} 天缺水位，當天不交易` : "",
     mkt === "US" ? (() => {
@@ -1065,11 +1064,7 @@ function renderArkBacktestTab() {
   ].filter(Boolean);
   return `
     <section class="dashboard-card ark-bt-card">
-      <table class="ark-bt-table">
-        <thead><tr><th>戰法</th><th>目前總值</th><th>總報酬</th><th>年化</th><th>持股數</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      ${arkBTCompareHtml(results, start, cur, mkt)}
+      ${arkBTMergedTableHtml(results, start, cur, mkt)}
       <div class="level-chart-container ark-bt-chart">${chartDates.length > 1 ? renderTimedSvg(series, chartDates, 600, 180) + arkBTBandsHtml(chartDates) : '<p class="muted-text">至少要 2 個記錄日才畫得出曲線。</p>'}</div>
       <p class="muted-text ark-bt-unit">曲線＝累積報酬 %，點圖上某一天看各戰法當天的持股與現金</p>
       ${arkBTDetailHtml(results, chartDates, cur, mkt)}
@@ -1078,23 +1073,31 @@ function renderArkBacktestTab() {
     </section>`;
 }
 
-// 跟你的推算總資產比（v0.57.6）：同一時間點＝最後一個紀錄日開盤前（戰法取前一個紀錄日收盤後），
-// 報酬都從起點開盤前的推算總資產（start.preTotal）算，起點基準一致
-function arkBTCompareHtml(results, start, cur, mkt) {
+// 你 vs 各戰法（v0.57.10，Sin 選 A：兩張表合併成一張，「你」放第一列＋「跟你比」）
+// 同一時間點＝最後一個紀錄日開盤前（你＝那天記的閒錢推算；戰法＝前一個紀錄日收盤後），都從起點開盤前推算總資產起算
+// 還沒有比較點（只有起點那天）→ 只列各戰法最新收盤後、從起始資金起算
+function arkBTMergedTableHtml(results, start, cur, mkt) {
+  const pct = (v) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+  const dot = (color) => (color ? `<span class="level-legend-dot" style="background:${color}"></span>` : "");
   const L = arkCashFlowRows(mkt).pop();
   const base = start.preTotal;
-  if (!L || !(base > 0) || L.date <= start.date) return "";
-  const pct = (v) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
-  const row = (label, color, v) => `<tr><td>${color ? `<span class="level-legend-dot" style="background:${color}"></span>` : ""}${label}</td><td>${cur}${formatNumber(v, 0)}</td><td class="${v >= base ? "is-pos" : "is-neg"}">${pct(v / base - 1)}</td></tr>`;
+  if (!L || !(base > 0) || L.date <= start.date) {
+    const rows = results.map(({ label, color, r }) => `<tr><td>${dot(color)}${label}</td><td>${cur}${formatNumber(r.finalValue, 0)}</td><td class="${r.totalReturn >= 0 ? "is-pos" : "is-neg"}">${pct(r.totalReturn || 0)}</td><td>${r.holdings.length}</td></tr>`).join("");
+    return `<table class="ark-bt-table"><thead><tr><th>各戰法（收盤後）</th><th>總值</th><th>從起點</th><th>持股數</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  const you = L.total;
+  const diff = (v) => { const d = Math.round(v - you); return `${d >= 0 ? "+" : "−"}${formatNumber(Math.abs(d), 0)}`; };
   const strat = results.map(({ label, color, r }) => {
     const p = r.series.filter((x) => x.date < L.date).pop();
-    return p ? row(label, color, p.value) : "";
+    if (!p) return "";
+    return `<tr><td>${dot(color)}${label}</td><td>${cur}${formatNumber(p.value, 0)}</td><td class="${p.value >= base ? "is-pos" : "is-neg"}">${pct(p.value / base - 1)}</td><td class="ark-bt-diff">${diff(p.value)}</td><td>${(p.positions || []).length}</td></tr>`;
   }).join("");
-  return `<table class="ark-bt-table ark-bt-compare">
-      <thead><tr><th>${L.date.slice(5)} 開盤前</th><th>總值</th><th>從起點</th></tr></thead>
-      <tbody>${row("你（推算總資產）", "", L.total)}${strat}</tbody>
+  return `<div class="ark-bt-merged-head"><b>你 vs 各戰法</b><span class="muted-text">${L.date.slice(5).replace("-", "/")} 開盤前・都從起點 ${cur}${formatNumber(base, 0)} 起算</span></div>
+    <table class="ark-bt-table ark-bt-merged">
+      <thead><tr><th></th><th>總值</th><th>從起點</th><th>跟你比</th><th>持股數</th></tr></thead>
+      <tbody><tr class="is-you"><td>你（推算總資產）</td><td>${cur}${formatNumber(you, 0)}</td><td class="${you >= base ? "is-pos" : "is-neg"}">${pct(you / base - 1)}</td><td class="ark-bt-diff">—</td><td>${L.m.size}</td></tr>${strat}</tbody>
     </table>
-    <p class="muted-text ark-bt-note">同一個時間點比較：你＝${L.date.slice(5)} 記的閒錢推算；戰法＝前一個紀錄日收盤後；都從起點開盤前 ${cur}${formatNumber(base, 0)} 起算</p>`;
+    <p class="muted-text ark-bt-note">你＝${L.date.slice(5).replace("-", "/")} 記的閒錢推算；戰法＝前一個紀錄日收盤後（收盤後的數字點曲線最後一天看）</p>`;
 }
 
 // 曲線上的透明日期區塊（位置算法同 renderTimedSvg：W=600、PL=52、PR=8、PB=24）
