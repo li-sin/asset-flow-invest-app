@@ -4221,3 +4221,34 @@ button.ark-bp-cat-badge { border: 0; cursor: pointer; font: inherit; }
 .asset-note { font-size: var(--fs-caption); margin: 4px 0 0; }
 .asset-tile .is-pos { color: var(--red); }
 .asset-tile .is-neg { color: var(--green); }
+
+/* ===== 回測頁出入金（v0.57.9 改版：摘要／待確認／近 30 天／更早收合／手動新增收合）===== */
+.ark-cf-list { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: var(--fs-small); }
+.ark-cf-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ark-cf-head h4 { margin: 0; font-size: 15px; }
+.ark-cf-sum { color: var(--muted); font-size: var(--fs-small); }
+.ark-cf-hint-line { margin: 4px 0 12px; font-size: var(--fs-caption); }
+.ark-cf-pending { border-left: 2px solid var(--amber); padding: 2px 0 2px 10px; margin-bottom: 14px; }
+.ark-cf-pending-title { color: var(--amber); font-weight: 600; margin-bottom: 4px; }
+.ark-cf-section { color: var(--muted); font-weight: 600; margin: 4px 0 2px; }
+.ark-cf-item { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.ark-cf-items .ark-cf-item:last-child, .ark-cf-pending .ark-cf-item:last-child { border-bottom: none; }
+.ark-cf-pending .ark-cf-item { border-bottom: none; padding: 4px 0; }
+.ark-cf-date { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ark-cf-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ark-cf-amt { text-align: right; font-variant-numeric: tabular-nums; }
+.ark-cf-amt.is-in { color: var(--green); }
+.ark-cf-tag { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--bg-soft); color: var(--muted); margin-left: 4px; }
+.ark-cf-acts { display: flex; gap: 6px; }
+.ark-cf-x { width: 26px; height: 26px; padding: 0; border: none; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; border-radius: 6px; }
+.ark-cf-x:hover { background: var(--hover-bg); color: var(--text); }
+.ark-cf-item.is-off .ark-cf-label, .ark-cf-item.is-off .ark-cf-amt { color: var(--muted); text-decoration: line-through; }
+.ark-cf-items.is-older .ark-cf-item { opacity: 0.8; }
+.ark-cf-note { width: 11em; max-width: 60%; background: transparent; border: none; border-bottom: 1px dashed var(--line); color: var(--text); font-size: var(--fs-small); padding: 2px 0; }
+.ark-cf-note:focus { outline: none; border-bottom-color: var(--accent); }
+.ark-cf-toggle { margin-top: 8px; padding: 4px 0; border: none; background: transparent; color: var(--muted); font-size: var(--fs-small); cursor: pointer; }
+.ark-cf-toggle:hover { color: var(--text); }
+.ark-cf-add { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.ark-cf-add-form { display: grid; grid-template-columns: 140px 110px minmax(0, 1fr) auto; gap: 8px; margin-top: 8px; }
+.ark-cf-add-form input { min-width: 0; }
+@media (max-width: 520px) { .ark-cf-add-form { grid-template-columns: 1fr 1fr; } .ark-cf-add-form input[type="text"] { grid-column: 1 / -1; } }

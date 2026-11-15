@@ -624,37 +624,54 @@ function arkCashFlowHintHtml(mkt) {
   }
   return `<div class="ark-bp-derived ark-cf-hint">預估閒錢約 <b>${formatNumber(Math.round(expIdle), 0)}</b> <span class="muted-text">（照上次 ${p.date.slice(5)} 的推算總資產＋股價漲跌＋買賣${flowItems.length ? `，已算進：${escapeHtml(flowItems.map((f) => `${f.label} ${f.amount < 0 ? "+" : "−"}${formatNumber(Math.abs(Math.round(f.amount)), 0)}`).join("、"))}` : ""}）</span>${ask}</div>`;
 }
-// 回測頁：可能的出金（一鍵確認）＋已記的出金（可撤銷）＋手動新增
+// 回測頁出入金（v0.57.9 改版，Sin 11/15：只放最近一個月、其他收起來、版面不要雜亂）
+// 摘要一行 → 待確認（不分日期都顯示）→ 近 30 天（自動帶入＋手動，新到舊）→ 更早（收合）→ 手動新增（收在按鈕後）
+const ARK_CF_RECENT_DAYS = 30;
 function arkCashFlowListHtml(mkt) {
-  const cands = arkCashFlowCandidates(mkt);
-  const done = (state.arkCashFlows || []).filter((f) => f.market === mkt && f.status === "out");
+  const todayStr = today(), cutoff = shiftDateStr(todayStr, -ARK_CF_RECENT_DAYS);
   const attrs = (d) => `data-market="${mkt}" data-date="${escapeHtml(d)}"`;
-  const candHtml = cands.length
-    ? cands.map((c) => `<div class="ark-cf-row">${c.date.slice(5)} 可能出金約 <b>${cfMoney(mkt, c.amount)}</b>
-        <button type="button" class="ark-bp-idle-preset" data-ark-cf-yes data-amount="${c.amount}" ${attrs(c.date)}>是</button>
-        <button type="button" class="ark-bp-idle-preset" data-ark-cf-no data-amount="${c.amount}" ${attrs(c.date)}>不是</button></div>`).join("")
-    : `<p class="muted-text ark-bt-note">沒有待確認的出金</p>`;
-  const doneHtml = done.length
-    ? done.map((f) => `<div class="ark-cf-row">✓ ${f.date.slice(5)} 出金 ${cfMoney(mkt, f.amount)}
-        <input type="text" class="ark-cf-note" style="width:9em" data-ark-cf-note ${attrs(f.date)} value="${escapeHtml(f.note || "")}" placeholder="備註（哪一筆）" title="改完離開欄位就存">
-        <button type="button" class="ark-bp-idle-preset" data-ark-cf-undo ${attrs(f.date)}>撤銷</button></div>`).join("")
-    : "";
-  // 自動帶入（v0.57.8）：BudgetAssistant 的卡費、房租（出金）與 Bear 還款（入金），只列紀錄期間內的
+  const fmt = (v) => formatNumber(Math.abs(Math.round(v)), 0);
   const firstRec = state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === mkt).map((r) => r.date).sort()[0] || "";
-  const knownList = mkt === "TW" ? (state.arkKnownFlows || []).filter((k) => k.date > firstRec && k.date <= today()) : [];
-  const knownHtml = mkt !== "TW" ? "" : state.arkKnownFlowsError
-    ? `<p class="muted-text ark-bt-note">⚠️ 讀不到 BudgetAssistant（卡費／房租／Bear 還款沒有自動帶入）：${escapeHtml(state.arkKnownFlowsError)}</p>`
-    : `<p class="muted-text ark-bt-note">自動帶入（BudgetAssistant；卡費照各家繳款日、房租 16 號、Bear 還款＝入金）：</p>` + (knownList.length
-      ? knownList.map((k) => { const off = arkKnownSkipped(k.id);
-          return `<div class="ark-cf-row${off ? " muted-text" : ""}">${off ? "✕" : "↻"} ${k.date.slice(5)} ${escapeHtml(k.label)} ${k.amount < 0 ? "入金 +" : "出金 "}${cfMoney(mkt, Math.abs(k.amount))}${off ? "（已排除）" : ""}
-            <button type="button" class="ark-bp-idle-preset" data-ark-cf-skip="${escapeHtml(k.id)}">${off ? "恢復" : "不是"}</button></div>`; }).join("")
-      : `<p class="muted-text ark-bt-note">這段期間沒有</p>`);
+  const items = [
+    ...(mkt === "TW" ? (state.arkKnownFlows || []) : []).filter((k) => k.date > firstRec && k.date <= todayStr)
+      .map((k) => ({ date: k.date, label: k.label, amount: k.amount, kind: "auto", id: k.id, off: arkKnownSkipped(k.id) })),
+    ...(state.arkCashFlows || []).filter((f) => f.market === mkt && f.status === "out" && f.date <= todayStr)
+      .map((f) => ({ date: f.date, label: f.note, amount: f.amount, kind: "manual" })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+  const recent = items.filter((x) => x.date >= cutoff), older = items.filter((x) => x.date < cutoff);
+  const live = recent.filter((x) => !x.off);
+  const outSum = live.filter((x) => x.amount > 0).reduce((s, x) => s + x.amount, 0);
+  const inSum = live.filter((x) => x.amount < 0).reduce((s, x) => s - x.amount, 0);
+  const row = (x) => {
+    const btn = x.kind === "auto"
+      ? `<button type="button" class="ark-cf-x" data-ark-cf-skip="${escapeHtml(x.id)}" aria-label="${x.off ? "恢復這筆" : "排除這筆"}" title="${x.off ? "恢復" : "不是（排除）"}">${x.off ? "↺" : "✕"}</button>`
+      : `<button type="button" class="ark-cf-x" data-ark-cf-undo ${attrs(x.date)} aria-label="刪除這筆" title="撤銷">✕</button>`;
+    const label = x.kind === "auto"
+      ? `${escapeHtml(x.label)} <span class="ark-cf-tag">自動</span>`
+      : `<input type="text" class="ark-cf-note" data-ark-cf-note ${attrs(x.date)} value="${escapeHtml(x.label || "")}" placeholder="出金（點這裡寫備註）" title="改完離開欄位就存"> <span class="ark-cf-tag">手動</span>`;
+    return `<div class="ark-cf-item${x.off ? " is-off" : ""}"><span class="ark-cf-date">${x.date.slice(5).replace("-", "/")}</span><span class="ark-cf-label">${label}</span><span class="ark-cf-amt${x.amount < 0 ? " is-in" : ""}">${x.amount < 0 ? "+" : "−"}${fmt(x.amount)}</span>${btn}</div>`;
+  };
+  const cands = arkCashFlowCandidates(mkt);
+  const pendingHtml = cands.length ? `<div class="ark-cf-pending">
+      <div class="ark-cf-pending-title">待確認 ${cands.length} 筆</div>
+      ${cands.map((c) => `<div class="ark-cf-item"><span class="ark-cf-date">${c.date.slice(5).replace("-", "/")}</span><span class="ark-cf-label">可能出金</span><span class="ark-cf-amt">${fmt(c.amount)}</span><span class="ark-cf-acts">
+        <button type="button" class="ark-bp-idle-preset" data-ark-cf-yes data-amount="${c.amount}" ${attrs(c.date)}>是</button>
+        <button type="button" class="ark-bp-idle-preset" data-ark-cf-no data-amount="${c.amount}" ${attrs(c.date)}>不是</button></span></div>`).join("")}
+    </div>` : "";
+  const errHtml = mkt === "TW" && state.arkKnownFlowsError ? `<p class="muted-text ark-bt-note">⚠️ 讀不到 BudgetAssistant，卡費／房租／Bear 還款沒有自動帶入：${escapeHtml(state.arkKnownFlowsError)}</p>` : "";
+  const olderHtml = older.length ? `<button type="button" class="ark-cf-toggle" data-ark-cf-older>${state.arkCfOlderOpen ? "▾" : "▸"} 更早 ${older.length} 筆</button>
+      ${state.arkCfOlderOpen ? `<div class="ark-cf-items is-older">${older.map(row).join("")}</div>` : ""}` : "";
+  const addHtml = `<div class="ark-cf-add">
+      <button type="button" class="ark-cf-toggle" data-ark-cf-addtoggle>${state.arkCfAddOpen ? "▾" : "＋"} 手動新增</button>
+      ${state.arkCfAddOpen ? `<div class="ark-cf-add-form"><input type="date" id="ark-cf-date" max="${escapeHtml(todayStr)}" value="${escapeHtml(todayStr)}"><input type="number" inputmode="decimal" id="ark-cf-amount" placeholder="${mkt === "US" ? "美元" : "台幣"}"><input type="text" id="ark-cf-note" placeholder="備註，例如 Macbook"><button type="button" class="ark-bp-idle-preset" id="ark-cf-add">新增</button></div>` : ""}
+    </div>`;
   return `<div class="ark-cf-list">
-      <h4>出入金${state.arkCashFlowSaving ? "（寫入中…）" : ""}</h4>
-      ${knownHtml}
-      <p class="muted-text ark-bt-note">閒錢比照買賣（和上面自動帶入的）算出來的少超過 ${cfMoney(mkt, ARK_CF_THRESHOLD[mkt])}、且下一個紀錄日沒補回的日子；確認是出金後，各戰法在同一天扣掉同樣金額</p>
-      ${candHtml}${doneHtml}
-      <div class="ark-cf-row ark-cf-add">手動新增 <input type="date" id="ark-cf-date" max="${escapeHtml(today())}"> <input type="number" inputmode="decimal" id="ark-cf-amount" placeholder="${mkt === "US" ? "美元" : "台幣"}"> <input type="text" id="ark-cf-note" style="width:9em" placeholder="備註（例如 Macbook）"> <button type="button" class="ark-bp-idle-preset" id="ark-cf-add">新增</button></div>
+      <div class="ark-cf-head"><h4>出入金${state.arkCashFlowSaving ? "（寫入中…）" : ""}</h4><span class="ark-cf-sum">近 ${ARK_CF_RECENT_DAYS} 天：出金 ${cfMoney(mkt, outSum)}${inSum ? ` · 入金 +${cfMoney(mkt, inSum)}` : ""}</span></div>
+      <p class="muted-text ark-cf-hint-line">ⓘ ${mkt === "TW" ? "卡費、房租、Bear 還款從 BudgetAssistant 自動帶入；" : ""}回測同一天扣掉或加回</p>
+      ${errHtml}${pendingHtml}
+      <div class="ark-cf-section">近 ${ARK_CF_RECENT_DAYS} 天</div>
+      ${recent.length ? `<div class="ark-cf-items">${recent.map(row).join("")}</div>` : `<p class="muted-text ark-bt-note">沒有出入金</p>`}
+      ${olderHtml}${addHtml}
     </div>`;
 }
 function bindArkCashFlowEvents(root) {
@@ -672,6 +689,8 @@ function bindArkCashFlowEvents(root) {
     setArkCashFlow(b.dataset.market, b.dataset.date, { amount: Number(b.dataset.amount) || 0, status: "dismiss" })));
   root.querySelectorAll("[data-ark-cf-undo]").forEach((b) => b.addEventListener("click", () => setArkCashFlow(b.dataset.market, b.dataset.date, null)));
   root.querySelectorAll("[data-ark-cf-skip]").forEach((b) => b.addEventListener("click", () => toggleArkKnownSkip(b.dataset.arkCfSkip)));
+  root.querySelector("[data-ark-cf-older]")?.addEventListener("click", () => { state.arkCfOlderOpen = !state.arkCfOlderOpen; renderCloudSnapshot(); });
+  root.querySelector("[data-ark-cf-addtoggle]")?.addEventListener("click", () => { state.arkCfAddOpen = !state.arkCfAddOpen; renderCloudSnapshot(); });
   root.querySelector("#ark-cf-add")?.addEventListener("click", () => {
     const d = root.querySelector("#ark-cf-date")?.value;
     const a = Number(root.querySelector("#ark-cf-amount")?.value);
