@@ -8,7 +8,7 @@ import {
   simulateArkStrategy,
   marketSessionDate,
   derivedTotalAsset, combineAssetSeries, preTradeSnapshot, cashFlowGaps, expectedIdleTwd,
-} from './logic.js?v=0.57.6'; // ?v＝HTTP cache bust，每次 push 跟 index.html 一起改
+} from './logic.js?v=0.57.7'; // ?v＝HTTP cache bust，每次 push 跟 index.html 一起改
 
 window.taipeiNow = taipeiNow;
 window.today = today;

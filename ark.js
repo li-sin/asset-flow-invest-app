@@ -564,7 +564,7 @@ function arkCashFlowHintHtml(mkt) {
   const decided = (state.arkCashFlows || []).find((f) => f.market === mkt && f.date === D);
   let ask = "";
   if (decided?.status === "out") {
-    ask = `<div class="ark-cf-ask">✓ 這天已記出金 ${cfMoney(mkt, decided.amount)} <button type="button" class="ark-bp-idle-preset" data-ark-cf-undo ${attrs}>撤銷</button></div>`;
+    ask = `<div class="ark-cf-ask">✓ 這天已記出金 ${cfMoney(mkt, decided.amount)}${decided.note ? `（${escapeHtml(decided.note)}）` : ""} <button type="button" class="ark-bp-idle-preset" data-ark-cf-undo ${attrs}>撤銷</button></div>`;
   } else if (r.total !== null && idle !== 100000 && decided?.status !== "dismiss"
     // 只在「這天已有紀錄」或「Sin 動過閒錢欄」時才問：新的一天閒錢欄是帶入上次的值，還沒填就問會誤判
     && (state.arkBPIdleTouched || state.arkBPRecords.some((x) => x.date === D && marketForSymbol(x.symbol) === mkt))) {
@@ -589,20 +589,28 @@ function arkCashFlowListHtml(mkt) {
         <button type="button" class="ark-bp-idle-preset" data-ark-cf-no data-amount="${c.amount}" ${attrs(c.date)}>不是</button></div>`).join("")
     : `<p class="muted-text ark-bt-note">沒有待確認的出金</p>`;
   const doneHtml = done.length
-    ? done.map((f) => `<div class="ark-cf-row">✓ ${f.date.slice(5)} 出金 ${cfMoney(mkt, f.amount)}${f.note ? `（${escapeHtml(f.note)}）` : ""}
+    ? done.map((f) => `<div class="ark-cf-row">✓ ${f.date.slice(5)} 出金 ${cfMoney(mkt, f.amount)}
+        <input type="text" class="ark-cf-note" style="width:9em" data-ark-cf-note ${attrs(f.date)} value="${escapeHtml(f.note || "")}" placeholder="備註（哪一筆）" title="改完離開欄位就存">
         <button type="button" class="ark-bp-idle-preset" data-ark-cf-undo ${attrs(f.date)}>撤銷</button></div>`).join("")
     : "";
   return `<div class="ark-cf-list">
       <h4>出金${state.arkCashFlowSaving ? "（寫入中…）" : ""}</h4>
       <p class="muted-text ark-bt-note">閒錢比照買賣算出來的少超過 ${cfMoney(mkt, ARK_CF_THRESHOLD[mkt])}、且下一個紀錄日沒補回的日子；確認是出金後，各戰法在同一天扣掉同樣金額</p>
       ${candHtml}${doneHtml}
-      <div class="ark-cf-row ark-cf-add">手動新增 <input type="date" id="ark-cf-date" max="${escapeHtml(today())}"> <input type="number" inputmode="decimal" id="ark-cf-amount" placeholder="${mkt === "US" ? "美元" : "台幣"}"> <button type="button" class="ark-bp-idle-preset" id="ark-cf-add">新增</button></div>
+      <div class="ark-cf-row ark-cf-add">手動新增 <input type="date" id="ark-cf-date" max="${escapeHtml(today())}"> <input type="number" inputmode="decimal" id="ark-cf-amount" placeholder="${mkt === "US" ? "美元" : "台幣"}"> <input type="text" id="ark-cf-note" style="width:9em" placeholder="備註（例如 Macbook）"> <button type="button" class="ark-bp-idle-preset" id="ark-cf-add">新增</button></div>
     </div>`;
 }
 function bindArkCashFlowEvents(root) {
   if (!root) return;
   root.querySelectorAll("[data-ark-cf-yes]").forEach((b) => b.addEventListener("click", () =>
-    setArkCashFlow(b.dataset.market, b.dataset.date, { amount: Number(b.dataset.amount) || 0, status: "out", note: "自動偵測" })));
+    setArkCashFlow(b.dataset.market, b.dataset.date, { amount: Number(b.dataset.amount) || 0, status: "out", note: "" })));
+  // 備註（v0.57.7）：已記的出金可補寫是哪一筆，離開欄位（change）才存
+  root.querySelectorAll("[data-ark-cf-note]").forEach((inp) => inp.addEventListener("change", () => {
+    const cur = (state.arkCashFlows || []).find((f) => f.market === inp.dataset.market && f.date === inp.dataset.date);
+    const note = inp.value.trim();
+    if (!cur || cur.note === note) return;
+    setArkCashFlow(cur.market, cur.date, { ...cur, note });
+  }));
   root.querySelectorAll("[data-ark-cf-no]").forEach((b) => b.addEventListener("click", () =>
     setArkCashFlow(b.dataset.market, b.dataset.date, { amount: Number(b.dataset.amount) || 0, status: "dismiss" })));
   root.querySelectorAll("[data-ark-cf-undo]").forEach((b) => b.addEventListener("click", () => setArkCashFlow(b.dataset.market, b.dataset.date, null)));
@@ -610,7 +618,7 @@ function bindArkCashFlowEvents(root) {
     const d = root.querySelector("#ark-cf-date")?.value;
     const a = Number(root.querySelector("#ark-cf-amount")?.value);
     if (!d || !(a > 0)) { alert("請填日期和金額"); return; }
-    setArkCashFlow(state.arkBPMarket || "TW", d, { amount: a, status: "out", note: "手動" });
+    setArkCashFlow(state.arkBPMarket || "TW", d, { amount: a, status: "out", note: (root.querySelector("#ark-cf-note")?.value || "").trim() });
   });
 }
 
