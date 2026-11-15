@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.5";
+const APP_VERSION = "v0.57.6";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -37,6 +37,7 @@ const SHEET_NAMES = {
   cashPlan: CASH_PLAN_TAB,
   buyingPower: "AssetFlowBuyingPower",
   arkRank: "AssetFlowArkRank", // 庫存中位階最高的標的（戰法回測：100 美元／1 股的賣出依據，v0.51.0）
+  cashFlow: "AssetFlowCashFlow", // 從投資資金拿出來的錢（生活費、卡費…），回測同一天扣掉（v0.57.6）
 };
 const SHEET_HEADERS = {
   snapshots: ["snapshot_id", "created_at", "date", "market", "source_entry_id", "source_title", "row_count", "app_version"],
@@ -47,6 +48,8 @@ const SHEET_HEADERS = {
   cashPlan: ["說明", "金額", "預計年月"],
   buyingPower: ["date", "idle_cash", "symbol", "shares", "cat", "updated_on", "calc_cash"],
   arkRank: ["date", "market", "rank", "symbol"],
+  // amount：原幣（台股台幣、美股美元），正＝出金；status：out＝確認是出金、dismiss＝Sin 說不是（不再問）
+  cashFlow: ["date", "market", "amount", "note", "status", "created_at"],
 };
 const SYMBOL_NAMES = {};
 
@@ -111,6 +114,9 @@ const state = {
   arkBPSaving: false,
   arkBPIdleCash: "",
   arkBPCalcCash: "", // 方舟試算閒錢：填閒錢時自動帶入、可改大（按 100萬）；標準化一律用它
+  arkCashFlows: [], // 出金紀錄 [{ date, market, amount, note, status, createdAt }]（Sheet AssetFlowCashFlow，v0.57.6）
+  arkCashFlowSaving: false,
+  arkBPIdleTouched: false, // 這次有沒有動過閒錢欄（沒動＝帶入上次的值，不問出金）
   arkBPIdleByMkt: {}, // 閒錢／試算閒錢分市場暫存 { TW: { idle, calc }, US: {...} }，切換市場時換進來（v0.57.4）
   arkRankRecords: [], // [{ date, market, rank, symbol }]
   arkRankSel: { 1: "", 2: "", 3: "", 4: "", 5: "" }, // 1–2 必填、3–5 選填（v0.53.2） // 今日記錄（美股）位階最高 2 支：帶入上次，改過才算已更新
@@ -3353,6 +3359,7 @@ async function ensureSheetTables() {
   await updateSheetValues(SHEET_NAMES.cashPlan, "A1:C1", [SHEET_HEADERS.cashPlan]);
   await updateSheetValues(SHEET_NAMES.buyingPower, "A1:G1", [SHEET_HEADERS.buyingPower]);
   await updateSheetValues(SHEET_NAMES.arkRank, "A1:D1", [SHEET_HEADERS.arkRank]);
+  await updateSheetValues(SHEET_NAMES.cashFlow, "A1:F1", [SHEET_HEADERS.cashFlow]);
 }
 
 async function ensureCloudSheetTables() {
@@ -7651,12 +7658,15 @@ function renderCloudSnapshot() {
   els.cloudSnapshot.querySelector("#ark-bp-idle")?.addEventListener("input", (e) => {
     state.arkBPIdleCash = e.target.value;
     state.arkBPDirty = true;
+    state.arkBPIdleTouched = true; // 動過閒錢欄才問出金（v0.57.6）
     // 試算閒錢一律跟著閒錢蓋掉（Sin：避免忘了改回／忘了要按 100 萬），要放大再按「100萬」
     state.arkBPCalcCash = e.target.value;
     const calcInput = els.cloudSnapshot.querySelector("#ark-bp-calc");
     if (calcInput) calcInput.value = e.target.value;
     const slot = els.cloudSnapshot.querySelector("#ark-bp-derived-slot");
     if (slot) slot.innerHTML = arkBPDerivedTotalHtml(state.arkBPMarket || "TW");
+    const cfSlot = els.cloudSnapshot.querySelector("#ark-bp-cf-slot");
+    if (cfSlot) { cfSlot.innerHTML = arkCashFlowHintHtml(state.arkBPMarket || "TW"); bindArkCashFlowEvents(cfSlot); }
   });
   els.cloudSnapshot.querySelectorAll("[data-ark-rank]").forEach((sel) => {
     sel.addEventListener("change", () => {
@@ -7795,7 +7805,10 @@ function renderCloudSnapshot() {
   const refreshArkDerived = () => {
     const slot = els.cloudSnapshot.querySelector("#ark-bp-derived-slot");
     if (slot) slot.innerHTML = arkBPDerivedTotalHtml(state.arkBPMarket || "TW");
+    const cfSlot = els.cloudSnapshot.querySelector("#ark-bp-cf-slot"); // 預估閒錢／出金提示跟著水位、閒錢更新（v0.57.6）
+    if (cfSlot) { cfSlot.innerHTML = arkCashFlowHintHtml(state.arkBPMarket || "TW"); bindArkCashFlowEvents(cfSlot); }
   };
+  bindArkCashFlowEvents(els.cloudSnapshot); // 出金：是／不是／撤銷／手動新增（紀錄頁、回測頁）
   els.cloudSnapshot.querySelector("#ark-bp-level")?.addEventListener("input", (e) => {
     state.arkBPLevelInput = e.target.value;
     state.arkBPDirty = true;

@@ -161,8 +161,12 @@ export function floorToUnit(x, unit) {
 
 // initialHoldings：[{ symbol, shares, avgCost }] 起點當天 Sin 的實際持股（Sin 定：各戰法從實際持股開始，v0.52.0）
 //   現金＝起始資金（推算總資產）−起始持股市值；avgCost 缺就用起點收盤當成本
-export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapital, unit = 1, kind = "yellow", riskDiv = 10, initialHoldings = [] }) {
+// cashFlows：[{ date, amount }] Sin 從投資資金拿出來的錢（原幣，正＝出金、負＝入金，v0.57.6）：
+//   在「日期 ≥ 出金日」的第一個記錄日、交易前從現金扣掉；起點當天（含）以前的不扣（起點閒錢已是扣完的）
+export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapital, unit = 1, kind = "yellow", riskDiv = 10, initialHoldings = [], cashFlows = [] }) {
   let cash = Number(startCapital) || 0;
+  const flows = (cashFlows || []).filter((f) => f && f.date && Number(f.amount)).map((f) => ({ date: f.date, amount: Number(f.amount) })).sort((a, b) => a.date.localeCompare(b.date));
+  let flowIdx = 0, withdrawn = 0;
   const holdings = new Map(); // symbol → { shares, cost, lastPrice }
   const firstDate = days?.[0]?.date;
   const fixedKind = kind === "oneShare" || kind === "usd100"; // 1 股／100 美元：固定買量，買進總額不超過閒錢
@@ -188,9 +192,13 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
     for (const [sym, h] of holdings) mv += h.shares * (px(sym, date) || 0);
     return mv;
   };
+  while (flowIdx < flows.length && firstDate && flows[flowIdx].date <= firstDate) flowIdx++;
   for (const day of days || []) {
+    let flowOut = 0;
+    while (flowIdx < flows.length && flows[flowIdx].date <= day.date) { flowOut += flows[flowIdx].amount; flowIdx++; }
+    if (flowOut) { cash -= flowOut; withdrawn += flowOut; }
     const w = Number(day.level) / 100;
-    if (!(w > 0)) { series.push({ date: day.date, value: cash + mvOf(day.date), skipped: "缺水位" }); continue; }
+    if (!(w > 0)) { series.push({ date: day.date, value: cash + mvOf(day.date), skipped: "缺水位", flowOut }); continue; }
     let mv = mvOf(day.date);
     const total = cash + mv;
     let sold = 0, bought = 0;
@@ -262,7 +270,7 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
         return { symbol, shares: h.shares, avgCost: h.cost / h.shares, price, value: h.shares * price };
       }).sort((a, b) => b.value - a.value);
       // idle：交易後的閒錢（跟明細的現金／持股同一時點）
-      series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle: fIdle(), level: Number(day.level), positions, trades, rankMissing, rankNoneHeld, lowRetSold, idleShort });
+      series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle: fIdle(), level: Number(day.level), positions, trades, rankMissing, rankNoneHeld, lowRetSold, idleShort, flowOut });
       continue;
     }
     if (idle > 0) {
@@ -291,14 +299,14 @@ export function simulateArkStrategy({ days, priceAt, fxAt = () => 1, startCapita
       const price = px(symbol, day.date) || 0;
       return { symbol, shares: h.shares, avgCost: h.cost / h.shares, price, value: h.shares * price };
     }).sort((a, b) => b.value - a.value);
-    series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle, level: Number(day.level), positions, trades });
+    series.push({ date: day.date, value: cash + mvOf(day.date), cash, sold, bought, idle, level: Number(day.level), positions, trades, flowOut });
   }
   const start = Number(startCapital) || 0;
   const last = series[series.length - 1];
   const totalReturn = start > 0 && last ? last.value / start - 1 : null;
   const spanDays = series.length > 1 ? (Date.parse(last.date) - Date.parse(series[0].date)) / 86400000 : 0;
   const annualized = totalReturn !== null && spanDays >= 1 ? Math.pow(1 + totalReturn, 365 / spanDays) - 1 : null;
-  return { series, finalValue: last?.value ?? start, totalReturn, annualized, spanDays, holdings: [...holdings.entries()].map(([symbol, h]) => ({ symbol, ...h })) };
+  return { series, finalValue: last?.value ?? start, totalReturn, annualized, spanDays, withdrawn, holdings: [...holdings.entries()].map(([symbol, h]) => ({ symbol, ...h })) };
 }
 
 // ===== 開盤場次（首頁記錄提醒，v0.56.0）=====
@@ -334,6 +342,33 @@ export function preTradeSnapshot(snapshots, date) {
     if (s && s.date && s.date < date && (!best || s.date > best.date)) best = s;
   }
   return best;
+}
+// ===== 出金偵測（v0.57.6）=====
+// Sin 沒收入，生活費／卡費從投資資金拿，在方舟調低資金 → 閒錢變少；App 從「照買賣算出的預估現金」找出可能的出金
+// rows：同一市場依日期排序 [{ date, total, held, trade, flow }]（原幣）
+//   total＝開盤前推算總資產、held＝開盤前持股（前一交易日收盤）、trade＝跟上一列之間的買賣金額（正＝買進）、
+//   flow＝這段期間已確認的出金（正＝出金）
+// 現金＝total−held；預估現金＝上一列現金−買賣−已確認出金；gap＝實際現金−預估現金（負＝錢變少）
+// candidate：gap < −threshold，且下一列沒補回一半以上（補回＝多半是閒錢記錯／沒更新，不是出金）
+export function cashFlowGaps(rows, threshold) {
+  const out = (rows || []).map((r, i) => {
+    const p = rows[i - 1];
+    if (!p) return { date: r.date, gap: null };
+    const expectedCash = (p.total - p.held) - (Number(r.trade) || 0) - (Number(r.flow) || 0);
+    return { date: r.date, gap: (r.total - r.held) - expectedCash, expectedCash, expectedTotal: expectedCash + r.held };
+  });
+  out.forEach((o, i) => {
+    const g = o.gap, nx = out[i + 1]?.gap;
+    o.bounced = g != null && g < -threshold && nx != null && nx > -g * 0.5;
+    o.candidate = g != null && g < -threshold && !o.bounced;
+  });
+  return out;
+}
+// 預估閒錢（台幣，方舟閒錢一律填台幣）：水位×預估總資產−持股（原幣）再×匯率
+export function expectedIdleTwd({ expectedTotal, held, levelPct, fx = 1 }) {
+  const w = Number(levelPct) / 100;
+  if (!(w > 0) || !Number.isFinite(expectedTotal)) return null;
+  return (w * expectedTotal - (Number(held) || 0)) * (Number(fx) || 1);
 }
 // 全部（Sin 定：甲＝只畫台股、美股同一天都有的日子）：all＝台股＋美股×當天匯率（台幣）
 export function combineAssetSeries(tw, us) {
