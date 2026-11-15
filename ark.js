@@ -497,14 +497,30 @@ function arkBPPrefillFromLast() {
   const asOf = state.arkBPDate || "";
   const records = state.arkBPRecords.filter((r) => !asOf || r.date <= asOf);
   if (!records.length) { state.arkBPRows = []; return; }
-  const dates = [...new Set(records.map((r) => r.date))].sort();
-  const lastDate = dates[dates.length - 1];
-  const lastRow = records.find((r) => r.date === lastDate);
-  if (lastRow) {
-    state.arkBPIdleCash = String(lastRow.idleCash || "");
-    state.arkBPCalcCash = String(lastRow.calcCash || lastRow.idleCash || "");
+  // 閒錢／試算閒錢分市場帶入（v0.57.4）：原本取「最後一天第一筆」不分市場，美股常帶到台股的閒錢
+  const by = {};
+  for (const mkt of ["TW", "US"]) {
+    const mRecs = records.filter((r) => marketForSymbol(r.symbol) === mkt);
+    const lastDate = mRecs.reduce((m, r) => (r.date > m ? r.date : m), "");
+    const lastRow = mRecs.find((r) => r.date === lastDate);
+    by[mkt] = lastRow ? { idle: String(lastRow.idleCash || ""), calc: String(lastRow.calcCash || lastRow.idleCash || "") } : { idle: "", calc: "" };
   }
+  state.arkBPIdleByMkt = by;
+  const cur = by[state.arkBPMarket || "TW"];
+  state.arkBPIdleCash = cur.idle;
+  state.arkBPCalcCash = cur.calc;
   state.arkBPRows = arkBPPrefillRows(records);
+}
+
+// 切換方舟紀錄頁市場（v0.57.4）：閒錢欄跟著換成該市場自己的值（沒存的輸入先暫存，切回來還在）
+function switchArkBPMarket(mkt) {
+  const from = state.arkBPMarket || "TW";
+  state.arkBPIdleByMkt[from] = { idle: state.arkBPIdleCash, calc: state.arkBPCalcCash };
+  state.arkBPMarket = mkt;
+  state.arkBPLevelInput = null; // 水位欄跟著市場換
+  const v = state.arkBPIdleByMkt[mkt] || { idle: "", calc: "" };
+  state.arkBPIdleCash = v.idle;
+  state.arkBPCalcCash = v.calc;
 }
 
 async function saveArkBPRecords() {

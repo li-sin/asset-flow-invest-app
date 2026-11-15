@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.3";
+const APP_VERSION = "v0.57.4";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -111,6 +111,7 @@ const state = {
   arkBPSaving: false,
   arkBPIdleCash: "",
   arkBPCalcCash: "", // 方舟試算閒錢：填閒錢時自動帶入、可改大（按 100萬）；標準化一律用它
+  arkBPIdleByMkt: {}, // 閒錢／試算閒錢分市場暫存 { TW: { idle, calc }, US: {...} }，切換市場時換進來（v0.57.4）
   arkRankRecords: [], // [{ date, market, rank, symbol }]
   arkRankSel: { 1: "", 2: "", 3: "", 4: "", 5: "" }, // 1–2 必填、3–5 選填（v0.53.2） // 今日記錄（美股）位階最高 2 支：帶入上次，改過才算已更新
   arkRankSelDate: "",
@@ -7642,8 +7643,7 @@ function renderCloudSnapshot() {
   });
   els.cloudSnapshot.querySelectorAll("[data-ark-bp-market]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      state.arkBPMarket = btn.dataset.arkBpMarket || "TW";
-      state.arkBPLevelInput = null; // 水位欄跟著市場換
+      switchArkBPMarket(btn.dataset.arkBpMarket || "TW");
       renderCloudSnapshot();
     });
   });
@@ -7812,7 +7812,7 @@ function renderCloudSnapshot() {
     btn.addEventListener("click", () => {
       state.dashboardTab = "ark";
       state.arkBPSubTab = "record";
-      if (state.arkBPMarket !== btn.dataset.arkRemindGo) { state.arkBPMarket = btn.dataset.arkRemindGo; state.arkBPLevelInput = null; }
+      if (state.arkBPMarket !== btn.dataset.arkRemindGo) switchArkBPMarket(btn.dataset.arkRemindGo);
       state.tabFadePending = true;
       setArkBPDate(btn.dataset.date || "");
     });
