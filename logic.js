@@ -364,6 +364,44 @@ export function cashFlowGaps(rows, threshold) {
   });
   return out;
 }
+// 已知的出入金（v0.57.8，Sin 選「自動算」）：從 BudgetAssistant 讀，不必手記
+//   cardRows＝信用卡明細 A:L（A 銀行、D 商店、E 金額、L 帳單月份）→ 各家每月帳單總額，在 dueDays[銀行] 那天出金（≤0＝退款，跳過）
+//   ledgerRows＝月度帳本 A:C（A 日期、B 項目、C 總金額）→ 項目＝房租：那個月 rentDay 號出金（帳本記成 1 號；雙數月含電費）
+//   bearRows＝Bear結算 G:I（G 月份、H 已還金額、I 最後還款日）→ 同一天加總成入金（Sin 會加回方舟資金）
+// 回傳 [{ id, date, amount, label }]：amount 正＝出金、負＝入金（台幣），依日期排序
+export function knownCashFlows({ cardRows = [], ledgerRows = [], bearRows = [], dueDays = {}, rentDay = 16 } = {}) {
+  const num = (x) => Number(String(x ?? "").replace(/[,\s]/g, "")) || 0;
+  const pad = (n) => String(n).padStart(2, "0");
+  const out = [];
+  const bills = new Map();
+  for (const r of cardRows) {
+    const bank = String(r[0] || "").trim(), month = String(r[11] || "").trim();
+    if (!bank || !/^\d{4}-\d{2}$/.test(month) || /繳款/.test(String(r[3] || ""))) continue;
+    const k = `${bank}|${month}`;
+    bills.set(k, (bills.get(k) || 0) + num(r[4]));
+  }
+  for (const [k, sum] of bills) {
+    const [bank, month] = k.split("|");
+    if (!(sum > 0) || !dueDays[bank]) continue;
+    out.push({ id: `card:${bank}:${month}`, date: `${month}-${pad(dueDays[bank])}`, amount: Math.round(sum), label: `${bank} ${Number(month.slice(5))} 月卡費` });
+  }
+  for (const r of ledgerRows) {
+    if (String(r[1] || "").trim() !== "房租") continue;
+    const month = String(r[0] || "").replace(/\//g, "-").slice(0, 7), amt = num(r[2]);
+    if (!/^\d{4}-\d{2}$/.test(month) || !(amt > 0)) continue;
+    out.push({ id: `rent:${month}`, date: `${month}-${pad(rentDay)}`, amount: amt, label: `${Number(month.slice(5))} 月房租` });
+  }
+  const repay = new Map();
+  for (const r of bearRows) {
+    const date = String(r[2] || "").replace(/\//g, "-").slice(0, 10), amt = num(r[1]);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(amt > 0)) continue;
+    const cur = repay.get(date) || { amount: 0, months: [] };
+    cur.amount += amt; cur.months.push(Number(String(r[0] || "").slice(5)) || r[0]);
+    repay.set(date, cur);
+  }
+  for (const [date, v] of repay) out.push({ id: `bear:${date}`, date, amount: -v.amount, label: `Bear 還 ${v.months.join("、")} 月` });
+  return out.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+}
 // 預估閒錢（台幣，方舟閒錢一律填台幣）：水位×預估總資產−持股（原幣）再×匯率
 export function expectedIdleTwd({ expectedTotal, held, levelPct, fx = 1 }) {
   const w = Number(levelPct) / 100;

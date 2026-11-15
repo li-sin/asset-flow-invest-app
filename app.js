@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.7";
+const APP_VERSION = "v0.57.8";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -116,6 +116,8 @@ const state = {
   arkBPCalcCash: "", // 方舟試算閒錢：填閒錢時自動帶入、可改大（按 100萬）；標準化一律用它
   arkCashFlows: [], // 出金紀錄 [{ date, market, amount, note, status, createdAt }]（Sheet AssetFlowCashFlow，v0.57.6）
   arkCashFlowSaving: false,
+  arkKnownFlows: [], // BudgetAssistant 自動帶入的卡費、房租（出金）與 Bear 還款（入金）[{ id, date, amount, label }]（v0.57.8）
+  arkKnownFlowsError: "",
   arkBPIdleTouched: false, // 這次有沒有動過閒錢欄（沒動＝帶入上次的值，不問出金）
   arkBPIdleByMkt: {}, // 閒錢／試算閒錢分市場暫存 { TW: { idle, calc }, US: {...} }，切換市場時換進來（v0.57.4）
   arkRankRecords: [], // [{ date, market, rank, symbol }]

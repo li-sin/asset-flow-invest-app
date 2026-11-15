@@ -465,6 +465,9 @@ function arkRankPrefill() {
 // 每天正常誤差（11/15 真實資料試算）：台股中位數約 1.3 萬、美股約 300 美元（75% 約 800）→ 超過門檻才問
 // 美股 Sin 一次提領 1,000～2,000 美元 → 門檻 1,000（300 會把一般誤差也抓進來）
 const ARK_CF_THRESHOLD = { TW: 20000, US: 1000 };
+// 已知出入金（v0.57.8，Sin 11/15 填）：各家卡費繳款日、房租每月 16 號；都從台股資金出
+const ARK_CARD_DUE = { 台新: 19, 永豐: 21, 星展: 22, 富邦: 16 };
+const ARK_RENT_DAY = 16;
 function cfMoney(mkt, v) { return `${mkt === "US" ? "US$" : "NT$"}${formatNumber(Math.round(Number(v) || 0), 0)}`; }
 async function loadArkCashFlows() {
   try {
@@ -474,6 +477,41 @@ async function loadArkCashFlows() {
       note: String(r[3] || ""), status: String(r[4] || "out"), createdAt: String(r[5] || ""),
     }));
   } catch (e) { console.warn("loadArkCashFlows", e); }
+  await loadArkKnownFlows();
+}
+// 從 BudgetAssistant 讀卡費、房租、Bear 還款（只讀；讀不到就當沒有，不擋其他功能）
+async function loadArkKnownFlows() {
+  try {
+    const [cardRows, ledgerRows, bearRows] = await Promise.all([
+      readForeignSheetValues(BUDGET_SHEET_ID, "信用卡明細", "A2:L"),
+      readForeignSheetValues(BUDGET_SHEET_ID, BUDGET_LEDGER_TAB, "A2:C"),
+      readForeignSheetValues(BUDGET_SHEET_ID, "Bear結算", "G7:I"),
+    ]);
+    state.arkKnownFlows = window.knownCashFlows({ cardRows, ledgerRows, bearRows, dueDays: ARK_CARD_DUE, rentDay: ARK_RENT_DAY });
+    state.arkKnownFlowsError = "";
+  } catch (e) {
+    console.warn("loadArkKnownFlows", e);
+    state.arkKnownFlows = [];
+    state.arkKnownFlowsError = String(e.message || e);
+  }
+}
+// 自動帶入的出入金（台股）：Sin 按過「不是」的（出金分頁 status＝skip、note＝id）排除
+function arkKnownSkipped(id) { return (state.arkCashFlows || []).some((f) => f.status === "skip" && f.note === id); }
+function arkKnownActive(mkt) { return mkt === "TW" ? (state.arkKnownFlows || []).filter((k) => !arkKnownSkipped(k.id)) : []; }
+async function toggleArkKnownSkip(id) {
+  if (state.arkCashFlowSaving) return;
+  const item = (state.arkKnownFlows || []).find((k) => k.id === id);
+  if (!item) return;
+  const prev = state.arkCashFlows;
+  const next = arkKnownSkipped(id)
+    ? prev.filter((f) => !(f.status === "skip" && f.note === id))
+    : [...prev, { date: item.date, market: "TW", amount: item.amount, note: id, status: "skip", createdAt: new Date().toISOString() }];
+  state.arkCashFlowSaving = true;
+  state.arkCashFlows = next;
+  renderCloudSnapshot();
+  try { await writeArkCashFlows(next); }
+  catch (e) { state.arkCashFlows = prev; alert(`出金紀錄寫入失敗：${e.message || e}`); }
+  finally { state.arkCashFlowSaving = false; renderCloudSnapshot(); }
 }
 async function writeArkCashFlows(records) {
   await ensureCloudSheetTables();
@@ -487,7 +525,7 @@ async function writeArkCashFlows(records) {
 async function setArkCashFlow(market, date, entry) {
   if (state.arkCashFlowSaving || !market || !date) return;
   const prev = state.arkCashFlows;
-  const kept = prev.filter((r) => !(r.market === market && r.date === date));
+  const kept = prev.filter((r) => !(r.market === market && r.date === date && r.status !== "skip")); // skip＝排除自動帶入，另外管
   const next = entry
     ? [...kept, { market, date, note: "", createdAt: new Date().toISOString(), ...entry }].sort((a, b) => a.date.localeCompare(b.date) || a.market.localeCompare(b.market))
     : kept;
@@ -520,8 +558,15 @@ function arkTradeBetween(p, r) {
   }
   return t;
 }
+// 這段期間的出入金（正＝出金）：手動／確認的出金＋自動帶入的卡費、房租、Bear 還款（v0.57.8）
+function arkFlowItemsBetween(mkt, from, to) {
+  const manual = (state.arkCashFlows || []).filter((f) => f.market === mkt && f.status === "out" && f.date > from && f.date <= to)
+    .map((f) => ({ amount: f.amount, label: f.note || "出金" }));
+  const known = arkKnownActive(mkt).filter((k) => k.date > from && k.date <= to).map((k) => ({ amount: k.amount, label: k.label }));
+  return [...manual, ...known];
+}
 function arkFlowBetween(mkt, from, to) {
-  return (state.arkCashFlows || []).filter((f) => f.market === mkt && f.status === "out" && f.date > from && f.date <= to).reduce((s, f) => s + f.amount, 0);
+  return arkFlowItemsBetween(mkt, from, to).reduce((s, f) => s + f.amount, 0);
 }
 function arkCashFlowRows(mkt) {
   const recs = state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === mkt);
@@ -537,7 +582,7 @@ function arkCashFlowRows(mkt) {
 }
 // 還沒回答過的「可能出金」：[{ date, amount }]（原幣）
 function arkCashFlowCandidates(mkt) {
-  const decided = new Set((state.arkCashFlows || []).filter((f) => f.market === mkt).map((f) => f.date));
+  const decided = new Set((state.arkCashFlows || []).filter((f) => f.market === mkt && f.status !== "skip").map((f) => f.date));
   return window.cashFlowGaps(arkCashFlowRows(mkt), ARK_CF_THRESHOLD[mkt])
     .filter((g) => g.candidate && !decided.has(g.date))
     .map((g) => ({ date: g.date, amount: Math.round(-g.gap) }));
@@ -556,12 +601,13 @@ function arkCashFlowHintHtml(mkt) {
   const idle = Number(state.arkBPIdleCash) || 0;
   const r = arkPreTradeRow(mkt, D, idle, level);
   if (!r) return "";
-  const flow = arkFlowBetween(mkt, p.date, D);
+  const flowItems = arkFlowItemsBetween(mkt, p.date, D);
+  const flow = flowItems.reduce((s, f) => s + f.amount, 0);
   const expectedCash = (p.total - p.held) - arkTradeBetween(p, r) - flow;
   const expIdle = window.expectedIdleTwd({ expectedTotal: expectedCash + r.held, held: r.held, levelPct: level, fx: r.fx });
   if (expIdle === null) return "";
   const attrs = `data-market="${mkt}" data-date="${escapeHtml(D)}"`;
-  const decided = (state.arkCashFlows || []).find((f) => f.market === mkt && f.date === D);
+  const decided = (state.arkCashFlows || []).find((f) => f.market === mkt && f.date === D && f.status !== "skip");
   let ask = "";
   if (decided?.status === "out") {
     ask = `<div class="ark-cf-ask">✓ 這天已記出金 ${cfMoney(mkt, decided.amount)}${decided.note ? `（${escapeHtml(decided.note)}）` : ""} <button type="button" class="ark-bp-idle-preset" data-ark-cf-undo ${attrs}>撤銷</button></div>`;
@@ -576,7 +622,7 @@ function arkCashFlowHintHtml(mkt) {
         <button type="button" class="ark-bp-idle-preset" data-ark-cf-no data-amount="${amt}" ${attrs}>不是</button></div>`;
     }
   }
-  return `<div class="ark-bp-derived ark-cf-hint">預估閒錢約 <b>${formatNumber(Math.round(expIdle), 0)}</b> <span class="muted-text">（照上次 ${p.date.slice(5)} 的推算總資產＋股價漲跌＋買賣${flow ? "−已記出金" : ""}）</span>${ask}</div>`;
+  return `<div class="ark-bp-derived ark-cf-hint">預估閒錢約 <b>${formatNumber(Math.round(expIdle), 0)}</b> <span class="muted-text">（照上次 ${p.date.slice(5)} 的推算總資產＋股價漲跌＋買賣${flowItems.length ? `，已算進：${escapeHtml(flowItems.map((f) => `${f.label} ${f.amount < 0 ? "+" : "−"}${formatNumber(Math.abs(Math.round(f.amount)), 0)}`).join("、"))}` : ""}）</span>${ask}</div>`;
 }
 // 回測頁：可能的出金（一鍵確認）＋已記的出金（可撤銷）＋手動新增
 function arkCashFlowListHtml(mkt) {
@@ -593,9 +639,20 @@ function arkCashFlowListHtml(mkt) {
         <input type="text" class="ark-cf-note" style="width:9em" data-ark-cf-note ${attrs(f.date)} value="${escapeHtml(f.note || "")}" placeholder="備註（哪一筆）" title="改完離開欄位就存">
         <button type="button" class="ark-bp-idle-preset" data-ark-cf-undo ${attrs(f.date)}>撤銷</button></div>`).join("")
     : "";
+  // 自動帶入（v0.57.8）：BudgetAssistant 的卡費、房租（出金）與 Bear 還款（入金），只列紀錄期間內的
+  const firstRec = state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === mkt).map((r) => r.date).sort()[0] || "";
+  const knownList = mkt === "TW" ? (state.arkKnownFlows || []).filter((k) => k.date > firstRec && k.date <= today()) : [];
+  const knownHtml = mkt !== "TW" ? "" : state.arkKnownFlowsError
+    ? `<p class="muted-text ark-bt-note">⚠️ 讀不到 BudgetAssistant（卡費／房租／Bear 還款沒有自動帶入）：${escapeHtml(state.arkKnownFlowsError)}</p>`
+    : `<p class="muted-text ark-bt-note">自動帶入（BudgetAssistant；卡費照各家繳款日、房租 16 號、Bear 還款＝入金）：</p>` + (knownList.length
+      ? knownList.map((k) => { const off = arkKnownSkipped(k.id);
+          return `<div class="ark-cf-row${off ? " muted-text" : ""}">${off ? "✕" : "↻"} ${k.date.slice(5)} ${escapeHtml(k.label)} ${k.amount < 0 ? "入金 +" : "出金 "}${cfMoney(mkt, Math.abs(k.amount))}${off ? "（已排除）" : ""}
+            <button type="button" class="ark-bp-idle-preset" data-ark-cf-skip="${escapeHtml(k.id)}">${off ? "恢復" : "不是"}</button></div>`; }).join("")
+      : `<p class="muted-text ark-bt-note">這段期間沒有</p>`);
   return `<div class="ark-cf-list">
-      <h4>出金${state.arkCashFlowSaving ? "（寫入中…）" : ""}</h4>
-      <p class="muted-text ark-bt-note">閒錢比照買賣算出來的少超過 ${cfMoney(mkt, ARK_CF_THRESHOLD[mkt])}、且下一個紀錄日沒補回的日子；確認是出金後，各戰法在同一天扣掉同樣金額</p>
+      <h4>出入金${state.arkCashFlowSaving ? "（寫入中…）" : ""}</h4>
+      ${knownHtml}
+      <p class="muted-text ark-bt-note">閒錢比照買賣（和上面自動帶入的）算出來的少超過 ${cfMoney(mkt, ARK_CF_THRESHOLD[mkt])}、且下一個紀錄日沒補回的日子；確認是出金後，各戰法在同一天扣掉同樣金額</p>
       ${candHtml}${doneHtml}
       <div class="ark-cf-row ark-cf-add">手動新增 <input type="date" id="ark-cf-date" max="${escapeHtml(today())}"> <input type="number" inputmode="decimal" id="ark-cf-amount" placeholder="${mkt === "US" ? "美元" : "台幣"}"> <input type="text" id="ark-cf-note" style="width:9em" placeholder="備註（例如 Macbook）"> <button type="button" class="ark-bp-idle-preset" id="ark-cf-add">新增</button></div>
     </div>`;
@@ -606,7 +663,7 @@ function bindArkCashFlowEvents(root) {
     setArkCashFlow(b.dataset.market, b.dataset.date, { amount: Number(b.dataset.amount) || 0, status: "out", note: "" })));
   // 備註（v0.57.7）：已記的出金可補寫是哪一筆，離開欄位（change）才存
   root.querySelectorAll("[data-ark-cf-note]").forEach((inp) => inp.addEventListener("change", () => {
-    const cur = (state.arkCashFlows || []).find((f) => f.market === inp.dataset.market && f.date === inp.dataset.date);
+    const cur = (state.arkCashFlows || []).find((f) => f.market === inp.dataset.market && f.date === inp.dataset.date && f.status !== "skip");
     const note = inp.value.trim();
     if (!cur || cur.note === note) return;
     setArkCashFlow(cur.market, cur.date, { ...cur, note });
@@ -614,6 +671,7 @@ function bindArkCashFlowEvents(root) {
   root.querySelectorAll("[data-ark-cf-no]").forEach((b) => b.addEventListener("click", () =>
     setArkCashFlow(b.dataset.market, b.dataset.date, { amount: Number(b.dataset.amount) || 0, status: "dismiss" })));
   root.querySelectorAll("[data-ark-cf-undo]").forEach((b) => b.addEventListener("click", () => setArkCashFlow(b.dataset.market, b.dataset.date, null)));
+  root.querySelectorAll("[data-ark-cf-skip]").forEach((b) => b.addEventListener("click", () => toggleArkKnownSkip(b.dataset.arkCfSkip)));
   root.querySelector("#ark-cf-add")?.addEventListener("click", () => {
     const d = root.querySelector("#ark-cf-date")?.value;
     const a = Number(root.querySelector("#ark-cf-amount")?.value);
@@ -934,7 +992,10 @@ function buildArkBacktestInput(mkt) {
     };
   });
   // 已確認的出金（原幣）：各戰法在同一天交易前扣掉（v0.57.6）
-  const cashFlows = (state.arkCashFlows || []).filter((f) => f.market === mkt && f.status === "out").map((f) => ({ date: f.date, amount: f.amount }));
+  const cashFlows = [
+    ...(state.arkCashFlows || []).filter((f) => f.market === mkt && f.status === "out").map((f) => ({ date: f.date, amount: f.amount })),
+    ...arkKnownActive(mkt).map((k) => ({ date: k.date, amount: k.amount })), // 卡費、房租、Bear 還款（v0.57.8）
+  ];
   return { start, days, fxAt, cashFlows };
 }
 
@@ -968,9 +1029,11 @@ function renderArkBacktestTab() {
     `起點 ${start.date}${mkt === "US" ? "（開始記位階後）" : ""}，起始資金 ${cur}${formatNumber(start.capital, 0)}（推算總資產，快照 ${start.snapDate.slice(5)}${mkt === "US" ? `，匯率 ${start.fx.toFixed(2)}` : ""}${start.missing ? `，⚠️ ${start.missing} 支缺收盤價未計入` : ""}）`,
     `各戰法從起點當天開盤前的實際持股（${start.holdings.length} 支）開始；共 ${days.length} 個記錄日；只算${mkt === "US" ? "產業" : "ETF"}價值區；以當天收盤價成交`,
     (() => {
-      const inRange = (cashFlows || []).filter((f) => f.date > start.date);
-      const sum = inRange.reduce((s, f) => s + f.amount, 0);
-      return inRange.length ? `期間出金 ${cfMoney(mkt, sum)}（${inRange.length} 筆，已從各戰法同一天扣掉）` : "期間沒有記出金（各戰法都假設錢一直留在帳戶裡）";
+      const inRange = (cashFlows || []).filter((f) => f.date > start.date && f.date <= today());
+      const out = inRange.filter((f) => f.amount > 0), dep = inRange.filter((f) => f.amount < 0);
+      const sum = (a) => a.reduce((s, f) => s + Math.abs(f.amount), 0);
+      if (!inRange.length) return "期間沒有出入金（各戰法都假設錢一直留在帳戶裡）";
+      return `期間出金 ${cfMoney(mkt, sum(out))}（${out.length} 筆）${dep.length ? `、入金 ${cfMoney(mkt, sum(dep))}（${dep.length} 筆）` : ""}，各戰法同一天扣掉／加回`;
     })(),
     over10.length ? `⚠️ 價值區超過 10 檔的日子：${over10.join("、")}` : "",
     noLevel ? `⚠️ ${noLevel} 天缺水位，當天不交易` : "",

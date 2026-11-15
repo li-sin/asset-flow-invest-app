@@ -7,8 +7,8 @@ import {
   newSymbolsVsPrevSnapshot,
   simulateArkStrategy,
   marketSessionDate,
-  derivedTotalAsset, combineAssetSeries, preTradeSnapshot, cashFlowGaps, expectedIdleTwd,
-} from './logic.js?v=0.57.7'; // ?v＝HTTP cache bust，每次 push 跟 index.html 一起改
+  derivedTotalAsset, combineAssetSeries, preTradeSnapshot, cashFlowGaps, expectedIdleTwd, knownCashFlows,
+} from './logic.js?v=0.57.8'; // ?v＝HTTP cache bust，每次 push 跟 index.html 一起改
 
 window.taipeiNow = taipeiNow;
 window.today = today;
@@ -31,3 +31,4 @@ window.combineAssetSeries = combineAssetSeries;
 window.preTradeSnapshot = preTradeSnapshot;
 window.cashFlowGaps = cashFlowGaps;
 window.expectedIdleTwd = expectedIdleTwd;
+window.knownCashFlows = knownCashFlows;
