@@ -326,6 +326,15 @@ export function derivedTotalAsset({ held, idleTwd, levelPct, fx = 1 }) {
   if (!(w > 0) || !(idle > 0) || idle === 100000) return null;
   return (h * r + idle) / w / r;
 }
+// 買賣前的快照（v0.57.5）：Sin 的閒錢是當天開盤前、還沒買賣時記的 → 推算總資產要配「日期早於當天」的最新一份快照
+// （當天的快照是買賣後的，配開盤前的閒錢會把當天買賣金額多算／少算一次）；找不到回 null
+export function preTradeSnapshot(snapshots, date) {
+  let best = null;
+  for (const s of snapshots || []) {
+    if (s && s.date && s.date < date && (!best || s.date > best.date)) best = s;
+  }
+  return best;
+}
 // 全部（Sin 定：甲＝只畫台股、美股同一天都有的日子）：all＝台股＋美股×當天匯率（台幣）
 export function combineAssetSeries(tw, us) {
   const usBy = new Map((us || []).map((p) => [p.date, p]));

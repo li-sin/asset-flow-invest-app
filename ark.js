@@ -741,13 +741,21 @@ function buildArkBacktestInput(mkt) {
     const idle = recs.find((r) => r.date === d)?.idleCash || 0;
     const level = targetLevelFromHistory(mkt, d);
     if (!idle || idle === 100000 || !level) continue;
-    const snap = snaps.filter((s) => s.date <= d).sort((a, b) => b.date.localeCompare(a.date))[0];
+    // 閒錢是開盤前記的 → 起點用前一份快照（買賣前的持股）×前一個交易日收盤推算（v0.57.5，Sin 11/15 定）
+    const snap = window.preTradeSnapshot(snaps, d);
     if (!snap) continue;
+    const prevDay = shiftDateStr(d, -1);
     const pos = (state.cloudHistory.positions || []).filter((p) => p.snapshotId === snap.snapshotId && Number(p.shares) > 0);
-    let held = 0, missing = 0;
-    for (const p of pos) { const c = historicalClose(p.symbol, d); if (c > 0) held += Number(p.shares) * c; else missing++; }
+    let held = 0, heldAtD = 0, missing = 0;
+    for (const p of pos) {
+      const c = historicalClose(p.symbol, prevDay); if (c > 0) held += Number(p.shares) * c; else missing++;
+      heldAtD += Number(p.shares) * (historicalClose(p.symbol, d) || 0);
+    }
     const fx = fxAt(d);
-    start = { date: d, capital: window.derivedTotalAsset({ held, idleTwd: idle, levelPct: level, fx }), snapDate: snap.date, missing, fx, // capital＝原幣（公式共用 logic.js，v0.57.2）
+    const preTotal = window.derivedTotalAsset({ held, idleTwd: idle, levelPct: level, fx }); // 原幣（公式共用 logic.js）
+    if (preTotal === null) continue;
+    // 模擬用起點當天收盤估持股、現金＝起始資金−持股 → 起始資金＝開盤前現金＋持股在起點收盤的市值（起點當天的漲跌才不會被現金吃掉）
+    start = { date: d, capital: preTotal - held + heldAtD, preTotal, snapDate: snap.date, missing, fx,
       holdings: pos.map((p) => ({ symbol: p.symbol, shares: Number(p.shares), avgCost: Number(p.avgCost) || 0 })) };
     break;
   }
@@ -792,7 +800,7 @@ function renderArkBacktestTab() {
   const noLevel = days.filter((d) => !d.level).length;
   const notes = [
     `起點 ${start.date}${mkt === "US" ? "（開始記位階後）" : ""}，起始資金 ${cur}${formatNumber(start.capital, 0)}（推算總資產，快照 ${start.snapDate.slice(5)}${mkt === "US" ? `，匯率 ${start.fx.toFixed(2)}` : ""}${start.missing ? `，⚠️ ${start.missing} 支缺收盤價未計入` : ""}）`,
-    `各戰法從起點當天的實際持股（${start.holdings.length} 支）開始；共 ${days.length} 個記錄日；只算${mkt === "US" ? "產業" : "ETF"}價值區；以當天收盤價成交`,
+    `各戰法從起點當天開盤前的實際持股（${start.holdings.length} 支）開始；共 ${days.length} 個記錄日；只算${mkt === "US" ? "產業" : "ETF"}價值區；以當天收盤價成交`,
     over10.length ? `⚠️ 價值區超過 10 檔的日子：${over10.join("、")}` : "",
     noLevel ? `⚠️ ${noLevel} 天缺水位，當天不交易` : "",
     mkt === "US" ? (() => {

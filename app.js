@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.4";
+const APP_VERSION = "v0.57.5";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -5108,17 +5108,18 @@ function renderTargetLevelChart(history) {
 function buildAssetSeries(mkt) {
   const recs = state.arkBPRecords.filter((r) => marketForSymbol(r.symbol) === mkt);
   const dates = [...new Set(recs.map((r) => r.date))].sort();
-  const snaps = (state.cloudHistory.snapshots || []).filter((sn) => normalizeMarketKey(sn.market) === mkt && sn.date)
-    .sort((a, b) => b.date.localeCompare(a.date));
+  const snaps = (state.cloudHistory.snapshots || []).filter((sn) => normalizeMarketKey(sn.market) === mkt && sn.date);
   const out = [];
   for (const d of dates) {
     const idle = recs.find((r) => r.date === d)?.idleCash || 0;
     const level = targetLevelFromHistory(mkt, d);
-    const snap = snaps.find((sn) => sn.date <= d);
+    // 閒錢是開盤前記的 → 配前一份快照（買賣前）×前一個交易日收盤（v0.57.5，Sin 11/15 定）
+    const snap = window.preTradeSnapshot(snaps, d);
     if (!snap) continue;
+    const prevDay = shiftDateStr(d, -1);
     const pos = (state.cloudHistory.positions || []).filter((p) => p.snapshotId === snap.snapshotId && Number(p.shares) > 0);
     let held = 0, missing = 0;
-    for (const p of pos) { const c = historicalClose(p.symbol, d); if (c > 0) held += Number(p.shares) * c; else missing++; }
+    for (const p of pos) { const c = historicalClose(p.symbol, prevDay); if (c > 0) held += Number(p.shares) * c; else missing++; }
     const fx = mkt === "US" ? historicalUsdTwdRate(d) : 1;
     const total = window.derivedTotalAsset({ held, idleTwd: idle, levelPct: level, fx });
     if (total === null) continue;
