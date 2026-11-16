@@ -405,6 +405,14 @@ export function knownCashFlows({ cardRows = [], ledgerRows = [], bearRows = [], 
   for (const [date, v] of repay) out.push({ id: `bear:${date}`, date, amount: -v.amount, label: `Bear 還 ${v.months.join("、")} 月` });
   return out.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 }
+// 反推水位（v0.57.11）：要讓推算總資產剛好是 total 時的水位 %＝(持股×fx＋閒錢台幣)÷(total×fx)×100
+// 用在「可能出金」旁標「可能是水位沒記」：前一天沿用舊水位時，反推出那天水位多少就對得上；算不出來回 null
+export function impliedLevelPct({ held, idleTwd, fx = 1, total }) {
+  const r = Number(fx) || 1, t = Number(total);
+  if (!(t > 0)) return null;
+  const pct = ((Number(held) || 0) * r + (Number(idleTwd) || 0)) / (t * r) * 100;
+  return Number.isFinite(pct) && pct > 0 ? pct : null;
+}
 // 預估閒錢（台幣，方舟閒錢一律填台幣）：水位×預估總資產−持股（原幣）再×匯率
 export function expectedIdleTwd({ expectedTotal, held, levelPct, fx = 1 }) {
   const w = Number(levelPct) / 100;

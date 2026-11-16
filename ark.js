@@ -537,6 +537,12 @@ async function setArkCashFlow(market, date, entry) {
   finally { state.arkCashFlowSaving = false; renderCloudSnapshot(); }
 }
 // 某天開盤前的狀態（同 buildAssetSeries）：前一份快照×前一個交易日收盤（原幣）；total＝用那天的閒錢推算
+// 這天實際用到的水位紀錄日期（同市場、日期 ≤ 這天的最新一筆；沒記就沿用前一次，v0.57.11）
+function arkLevelRecordDate(mkt, d) {
+  const key = normalizeMarketKey(mkt);
+  return (state.targetLevelHistory || []).filter((x) => x.market === key && x.date && x.date <= d)
+    .map((x) => x.date).sort().pop() || "";
+}
 function arkPreTradeRow(mkt, d, idleTwd, levelPct) {
   const snaps = (state.cloudHistory.snapshots || []).filter((sn) => normalizeMarketKey(sn.market) === mkt && sn.date);
   const snap = window.preTradeSnapshot(snaps, d);
@@ -547,7 +553,9 @@ function arkPreTradeRow(mkt, d, idleTwd, levelPct) {
   let held = 0;
   for (const [s, sh] of m) held += sh * (historicalClose(s, prevDay) || 0);
   const fx = mkt === "US" ? historicalUsdTwdRate(d) : 1;
-  return { date: d, snapDate: snap.date, m, held, fx, total: window.derivedTotalAsset({ held, idleTwd, levelPct, fx }) };
+  const levelDate = arkLevelRecordDate(mkt, d);
+  return { date: d, snapDate: snap.date, m, held, fx, idle: Number(idleTwd) || 0, level: levelPct, levelDate, levelStale: levelDate !== d,
+    total: window.derivedTotalAsset({ held, idleTwd, levelPct, fx }) };
 }
 // 兩個紀錄日之間的買賣金額（股數變化×後一份快照那天收盤，正＝買進）
 function arkTradeBetween(p, r) {
@@ -581,11 +589,17 @@ function arkCashFlowRows(mkt) {
   return rows;
 }
 // 還沒回答過的「可能出金」：[{ date, amount }]（原幣）
+// levelHint（v0.57.11）：這天或前一個紀錄日的水位是沿用的 → 多半是水位沒記，不是出金；附反推「水位多少就對得上」
 function arkCashFlowCandidates(mkt) {
   const decided = new Set((state.arkCashFlows || []).filter((f) => f.market === mkt && f.status !== "skip").map((f) => f.date));
-  return window.cashFlowGaps(arkCashFlowRows(mkt), ARK_CF_THRESHOLD[mkt])
-    .filter((g) => g.candidate && !decided.has(g.date))
-    .map((g) => ({ date: g.date, amount: Math.round(-g.gap) }));
+  const rows = arkCashFlowRows(mkt);
+  const hintOf = (row, total) => ({ date: row.date, usedFrom: row.levelDate, usedPct: row.level,
+    impliedPct: window.impliedLevelPct({ held: row.held, idleTwd: row.idle, fx: row.fx, total }) });
+  return window.cashFlowGaps(rows, ARK_CF_THRESHOLD[mkt])
+    .map((g, i) => ({ g, r: rows[i], p: rows[i - 1] }))
+    .filter(({ g }) => g.candidate && !decided.has(g.date))
+    .map(({ g, r, p }) => ({ date: g.date, amount: Math.round(-g.gap),
+      levelHint: p && p.levelStale ? hintOf(p, p.total + g.gap) : r.levelStale ? hintOf(r, r.total - g.gap) : null }));
 }
 // 紀錄頁：閒錢欄下方顯示預估閒錢；填的閒錢比預估少超過門檻 → 問是不是出金
 function arkCashFlowHintHtml(mkt) {
@@ -595,6 +609,9 @@ function arkCashFlowHintHtml(mkt) {
   }
   const D = state.arkBPDate || today();
   const level = Number(state.arkBPLevelInput) || targetLevelFromHistory(mkt, D);
+  // 水位欄沒填、用的是更早的水位紀錄 → 提醒（v0.57.11）
+  const lvFrom = Number(state.arkBPLevelInput) ? D : arkLevelRecordDate(mkt, D);
+  const lvNote = lvFrom && lvFrom < D ? `<span class="muted-text">・${D === today() ? "今天" : "這天"}水位還沒填，預估用的是 ${lvFrom.slice(5).replace("-", "/")} 的 ${level}%</span>` : "";
   if (!level) return "";
   const p = arkCashFlowRows(mkt).filter((r) => r.date < D).pop();
   if (!p) return "";
@@ -622,7 +639,7 @@ function arkCashFlowHintHtml(mkt) {
         <button type="button" class="ark-bp-idle-preset" data-ark-cf-no data-amount="${amt}" ${attrs}>不是</button></div>`;
     }
   }
-  return `<div class="ark-bp-derived ark-cf-hint">預估閒錢約 <b>${formatNumber(Math.round(expIdle), 0)}</b> <span class="muted-text">（照上次 ${p.date.slice(5)} 的推算總資產＋股價漲跌＋買賣${flowItems.length ? `，已算進：${escapeHtml(flowItems.map((f) => `${f.label} ${f.amount < 0 ? "+" : "−"}${formatNumber(Math.abs(Math.round(f.amount)), 0)}`).join("、"))}` : ""}）</span>${ask}</div>`;
+  return `<div class="ark-bp-derived ark-cf-hint">預估閒錢約 <b>${formatNumber(Math.round(expIdle), 0)}</b> <span class="muted-text">（照上次 ${p.date.slice(5)} 的推算總資產＋股價漲跌＋買賣${flowItems.length ? `，已算進：${escapeHtml(flowItems.map((f) => `${f.label} ${f.amount < 0 ? "+" : "−"}${formatNumber(Math.abs(Math.round(f.amount)), 0)}`).join("、"))}` : ""}）</span>${lvNote}${ask}</div>`;
 }
 // 回測頁出入金（v0.57.9 改版，Sin 11/15：只放最近一個月、其他收起來、版面不要雜亂）
 // 摘要一行 → 待確認（不分日期都顯示）→ 近 30 天（自動帶入＋手動，新到舊）→ 更早（收合）→ 手動新增（收在按鈕後）
@@ -654,7 +671,7 @@ function arkCashFlowListHtml(mkt) {
   const cands = arkCashFlowCandidates(mkt);
   const pendingHtml = cands.length ? `<div class="ark-cf-pending">
       <div class="ark-cf-pending-title">待確認 ${cands.length} 筆</div>
-      ${cands.map((c) => `<div class="ark-cf-item"><span class="ark-cf-date">${c.date.slice(5).replace("-", "/")}</span><span class="ark-cf-label">可能出金</span><span class="ark-cf-amt">${fmt(c.amount)}</span><span class="ark-cf-acts">
+      ${cands.map((c) => `<div class="ark-cf-item"><span class="ark-cf-date">${c.date.slice(5).replace("-", "/")}</span><span class="ark-cf-label">可能出金${c.levelHint ? `<span class="ark-cf-subnote">可能是水位沒記：${c.levelHint.date.slice(5).replace("-", "/")} ${c.levelHint.usedFrom ? `沿用 ${c.levelHint.usedFrom.slice(5).replace("-", "/")} 的 ${Number(c.levelHint.usedPct).toFixed(1)}%` : "沒有水位紀錄"}${c.levelHint.impliedPct ? `（約 ${c.levelHint.impliedPct.toFixed(1)}% 就對得上）` : ""}</span>` : ""}</span><span class="ark-cf-amt">${fmt(c.amount)}</span><span class="ark-cf-acts">
         <button type="button" class="ark-bp-idle-preset" data-ark-cf-yes data-amount="${c.amount}" ${attrs(c.date)}>是</button>
         <button type="button" class="ark-bp-idle-preset" data-ark-cf-no data-amount="${c.amount}" ${attrs(c.date)}>不是</button></span></div>`).join("")}
     </div>` : "";
