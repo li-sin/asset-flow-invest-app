@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.12";
+const APP_VERSION = "v0.57.13";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -5221,8 +5221,9 @@ function renderAssetTrendCard() {
   };
   const tipOf = (p) => {
     const miss = p.missing ? `\n⚠️ ${p.missing} 支缺收盤價（偏低）` : "";
-    if (mk === "ALL") return `${p.date}\n全部 ${assetMoney(p.total, "NT$")}\n台股 ${assetMoney(p.tw, "NT$")}\n美股 ${assetMoney(p.usTwd, "NT$")}（${assetMoney(p.us, "US$")} × ${p.fx.toFixed(2)}）${miss}`;
-    return `${p.date}\n${mk === "TW" ? "台股" : "美股"} ${assetMoney(p.v, cur)}${miss}`;
+    // v0.57.13：每個點都是那天開盤前的數字（前一交易日收盤＋當天早上記的閒錢），標清楚免得跟券商收盤後總額比錯
+    if (mk === "ALL") return `${p.date} 開盤前\n全部 ${assetMoney(p.total, "NT$")}\n台股 ${assetMoney(p.tw, "NT$")}\n美股 ${assetMoney(p.usTwd, "NT$")}（${assetMoney(p.us, "US$")} × ${p.fx.toFixed(2)}）${miss}`;
+    return `${p.date} 開盤前\n${mk === "TW" ? "台股" : "美股"} ${assetMoney(p.v, cur)}${miss}`;
   };
   const color = mk === "TW" ? "var(--blue)" : mk === "US" ? "var(--amber)" : "var(--green)";
   let marks, legend;
@@ -5251,6 +5252,7 @@ function renderAssetTrendCard() {
       <div class="level-chart-container asset-chart" style="position:relative">
         <svg viewBox="0 0 ${W} ${H}" class="level-chart-svg" aria-label="總資產趨勢">${yLines}${xLabels}${marks}${guide}${dots}${hits}</svg>
       </div>
+      <p class="muted-text asset-note">每個點＝那天開盤前（前一交易日收盤＋當天記的閒錢），跟券商收盤後的總額差一天漲跌</p>
       ${stacked ? '<p class="muted-text asset-note">堆疊從 0 開始（色塊厚度＝金額），起伏會顯得平；要看漲跌勾「放大起伏」</p>' : ""}
       ${missDays.length ? `<p class="ark-bp-warn-note">⚠️ ${missDays.length} 天有股票缺收盤價，當天總資產偏低：${missDays.slice(-8).join("、")}${missDays.length > 8 ? "…" : ""}</p>` : ""}
     </div>`);
