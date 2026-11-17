@@ -4264,3 +4264,6 @@ button.ark-bp-cat-badge { border: 0; cursor: pointer; font: inherit; }
 /* 可能出金旁「可能是水位沒記」小字（v0.57.11） */
 .ark-cf-pending .ark-cf-label { white-space: normal; }
 .ark-cf-subnote { display: block; font-size: var(--fs-caption); color: var(--muted); line-height: 1.4; margin-top: 2px; }
+
+/* 實際帳戶總額（v0.57.12）：推算那列跟在實際下面、淡一點 */
+.ark-bt-merged tr.is-you-derived td { color: var(--muted); }

@@ -413,6 +413,13 @@ export function impliedLevelPct({ held, idleTwd, fx = 1, total }) {
   const pct = ((Number(held) || 0) * r + (Number(idleTwd) || 0)) / (t * r) * 100;
   return Number.isFinite(pct) && pct > 0 ? pct : null;
 }
+// 實際帳戶總額 vs 推算總資產（v0.57.12）：diff＝推算−實際（正＝推算算多了），pct＝diff÷實際；任一邊缺就回 null
+export function actualVsDerived(actual, derived) {
+  if (derived == null || derived === "") return null; // Number(null)＝0，要先擋掉
+  const a = Number(actual), d = Number(derived);
+  if (!(a > 0) || !Number.isFinite(d)) return null;
+  return { diff: d - a, pct: (d - a) / a };
+}
 // 預估閒錢（台幣，方舟閒錢一律填台幣）：水位×預估總資產−持股（原幣）再×匯率
 export function expectedIdleTwd({ expectedTotal, held, levelPct, fx = 1 }) {
   const w = Number(levelPct) / 100;

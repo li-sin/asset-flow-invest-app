@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.11";
+const APP_VERSION = "v0.57.12";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -38,6 +38,7 @@ const SHEET_NAMES = {
   buyingPower: "AssetFlowBuyingPower",
   arkRank: "AssetFlowArkRank", // 庫存中位階最高的標的（戰法回測：100 美元／1 股的賣出依據，v0.51.0）
   cashFlow: "AssetFlowCashFlow", // 從投資資金拿出來的錢（生活費、卡費…），回測同一天扣掉（v0.57.6）
+  actualTotal: "AssetFlowActualTotal", // 實際帳戶總額校正點（券商股票＋券商現金＋銀行投資錢，開盤前看到的數字，v0.57.12）
 };
 const SHEET_HEADERS = {
   snapshots: ["snapshot_id", "created_at", "date", "market", "source_entry_id", "source_title", "row_count", "app_version"],
@@ -50,6 +51,7 @@ const SHEET_HEADERS = {
   arkRank: ["date", "market", "rank", "symbol"],
   // amount：原幣（台股台幣、美股美元），正＝出金；status：out＝確認是出金、dismiss＝Sin 說不是（不再問）
   cashFlow: ["date", "market", "amount", "note", "status", "created_at"],
+  actualTotal: ["date", "market", "total", "note", "created_at"], // total：原幣（台股台幣、美股美元）
 };
 const SYMBOL_NAMES = {};
 
@@ -119,6 +121,8 @@ const state = {
   arkKnownFlows: [], // BudgetAssistant 自動帶入的卡費、房租（出金）與 Bear 還款（入金）[{ id, date, amount, label }]（v0.57.8）
   arkKnownFlowsError: "",
   arkCfOlderOpen: false, // 回測頁出入金「更早 N 筆」展開（v0.57.9）
+  arkActualTotals: [], // 實際帳戶總額校正點 [{ date, market, total, note, createdAt }]（v0.57.12）
+  arkActualSaving: false,
   arkCfAddOpen: false,   // 回測頁出入金「手動新增」展開
   arkBPIdleTouched: false, // 這次有沒有動過閒錢欄（沒動＝帶入上次的值，不問出金）
   arkBPIdleByMkt: {}, // 閒錢／試算閒錢分市場暫存 { TW: { idle, calc }, US: {...} }，切換市場時換進來（v0.57.4）
@@ -3364,6 +3368,7 @@ async function ensureSheetTables() {
   await updateSheetValues(SHEET_NAMES.buyingPower, "A1:G1", [SHEET_HEADERS.buyingPower]);
   await updateSheetValues(SHEET_NAMES.arkRank, "A1:D1", [SHEET_HEADERS.arkRank]);
   await updateSheetValues(SHEET_NAMES.cashFlow, "A1:F1", [SHEET_HEADERS.cashFlow]);
+  await updateSheetValues(SHEET_NAMES.actualTotal, "A1:E1", [SHEET_HEADERS.actualTotal]);
 }
 
 async function ensureCloudSheetTables() {
