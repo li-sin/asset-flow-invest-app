@@ -3,12 +3,12 @@ import {
   classifySymbolMarket, normalizeMarketKey, splitRowsByMarket, unclassifiedSymbolRows,
   toNum,
   stripHeaderRow, computeFirstBuyMerge,
-  arkBPPrefillRows, arkBPShareChanged, arkBPRowUpdated, arkBPRowStatus,
+  arkBPPrefillRows, arkBPShareChanged, arkBPRowUpdated, arkBPRowStatus, arkBPUnfilledToNon,
   newSymbolsVsPrevSnapshot,
   simulateArkStrategy,
   marketSessionDate,
   derivedTotalAsset, combineAssetSeries, preTradeSnapshot, cashFlowGaps, expectedIdleTwd, knownCashFlows, impliedLevelPct, actualVsDerived,
-} from './logic.js?v=0.58.0'; // ?v＝HTTP cache bust，每次 push 跟 index.html 一起改
+} from './logic.js?v=0.58.1'; // ?v＝HTTP cache bust，每次 push 跟 index.html 一起改
 
 window.taipeiNow = taipeiNow;
 window.today = today;
@@ -22,6 +22,7 @@ window.computeFirstBuyMerge = computeFirstBuyMerge;
 window.arkBPPrefillRows = arkBPPrefillRows;
 window.arkBPShareChanged = arkBPShareChanged;
 window.arkBPRowUpdated = arkBPRowUpdated;
+window.arkBPUnfilledToNon = arkBPUnfilledToNon;
 window.arkBPRowStatus = arkBPRowStatus;
 window.newSymbolsVsPrevSnapshot = newSymbolsVsPrevSnapshot;
 window.simulateArkStrategy = simulateArkStrategy;

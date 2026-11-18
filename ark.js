@@ -876,9 +876,12 @@ async function saveArkBPRecords() {
   if (dupSyms.length) { alert(`代號重複：${dupSyms.join("、")}，請刪掉多的那列再儲存`); return; }
   // 新列股數空白會存成 0 股 → 先問（要清倉請打 0，v0.54.9）；帶入過的列空白＝上次就是 0，不問（v0.54.10）
   const blankSyms = validRows.filter((r) => r.srcShares === undefined && String(r.shares ?? "").trim() === "").map((r) => r.symbol.toUpperCase());
-  if (blankSyms.length && !confirm(`股數空白：${blankSyms.join("、")}，會存成 0 股，確定要儲存？`)) return;
+  if (blankSyms.length && !confirm(`股數空白：${blankSyms.join("、")}，會存成 0 股、標成「非」（沒填＝不在價值區），確定要儲存？`)) return;
+  // 今天沒填的價值區列改「非」（v0.58.1）；在價值區但 0 股請明確打 0 或點「上次 M/D」
+  const saveDay = state.arkBPDate || today();
+  const toNon = validRows.filter((r) => window.arkBPUnfilledToNon([{ ...r }], mkt, saveDay).length); // 先試算（複本），不動畫面
   // 價值區應為 10 檔（台股只布局 ETF 價值區）：超過就請 Sin 確認，避免回測多買（v0.52.0）
-  const etfCount = mkt === "TW" ? validRows.filter((r) => (r.cat || "ETF") === "ETF").length : 0;
+  const etfCount = mkt === "TW" ? validRows.filter((r) => (r.cat || "ETF") === "ETF" && !toNon.includes(r)).length : 0;
   if (mkt === "US" && (!state.arkRankSel[1] || !state.arkRankSel[2]) && !confirm("位階最高 1、2 還沒填（回測 1 股／100 美元要用），確定先儲存？")) return;
   const saveDate = state.arkBPDate || today();
   // 水位跟紀錄一起存（v0.56.0：水位統一在方舟紀錄頁輸入，首頁只顯示）
@@ -892,11 +895,14 @@ async function saveArkBPRecords() {
   if (etfCount > 10 && !confirm(`ETF 價值區有 ${etfCount} 檔（超過 10 檔），確定要這樣儲存？`)) return;
   state.arkBPSaving = true;
   renderCloudSnapshot();
+  let toNonPrevCat = [];
   try {
     const date = state.arkBPDate || today();
     const kept = state.arkBPRecords.filter((r) => !(r.date === date && marketForSymbol(r.symbol) === mkt));
     // 標準化一律用試算閒錢（空＝同閒錢），每筆都寫進 G 欄（v0.53.1）
     const calc = Number(state.arkBPCalcCash) > 0 ? Number(state.arkBPCalcCash) : cash;
+    toNonPrevCat = toNon.map((r) => [r, r.cat]);
+    const nonSyms = window.arkBPUnfilledToNon(toNon, mkt, date); // 確定要存了才真的改 rows 的分類
     const newEntries = validRows.map((r) => ({ date, idleCash: cash, calcCash: calc, symbol: r.symbol.toUpperCase(), shares: Number(r.shares), cat: r.cat || "ETF",
       updatedOn: arkBPRowUpdated(r) || !r.updatedOn ? date : r.updatedOn }));
     const allRecords = [...kept, ...newEntries];
@@ -904,7 +910,9 @@ async function saveArkBPRecords() {
     if (mkt === "US") await saveArkRankRecords(date);
     if (lvNum !== null && lvNum !== lvRec?.targetLevel) await saveTargetLevelToSheet(mkt, lvNum, date);
     await loadBuyingPowerRecords();
+    state.arkQEMsg = nonSyms.length ? `已存；今天沒填股數，已把 ${nonSyms.join("、")} 改成「非」` : "";
   } catch (e) {
+    for (const [r, c] of toNonPrevCat) r.cat = c; // 沒存成功 → 分類改回去
     alert("儲存失敗：" + (e.message || e));
   } finally {
     state.arkBPSaving = false;

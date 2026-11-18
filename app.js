@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.58.0";
+const APP_VERSION = "v0.58.1";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7911,8 +7911,7 @@ function renderCloudSnapshot() {
       const cur = String(state.arkBPRows[j].shares ?? "").trim();
       qeSay(`${sym} 已在總表${cur ? `，目前 ${cur} 股` : ""}`);
     } else {
-      const cat = arkLastCatFor(sym, mkt);
-      qeSay(`${sym} 是新標的，分類帶「${{ ETF: "ETF", IND: "產業", NON: "非價值區" }[cat]}」`);
+      qeSay(`${sym} 是新標的，分類帶「${mkt === "US" ? "產業" : "ETF"}」`);
     }
     qeSh?.focus();
     qeSh?.select?.();
@@ -7935,7 +7934,8 @@ function renderCloudSnapshot() {
       msg = `${sym} ${old && old !== v ? `${old} → ` : ""}${v} 股，已帶到下方（按儲存才寫入）`;
     } else {
       state.arkBPDismissed.delete(sym);
-      state.arkBPRows.push({ symbol: sym, shares: v, cat: arkLastCatFor(sym, mkt), isNew: true, touched: true, _mkt: mkt });
+      // 快速輸入新增的一律帶價值區標籤：美股產業、台股 ETF（v0.58.1，Sin 11/18；已在總表的列不改）
+      state.arkBPRows.push({ symbol: sym, shares: v, cat: mkt === "US" ? "IND" : "ETF", isNew: true, touched: true, _mkt: mkt });
       j = state.arkBPRows.length - 1;
       msg = `${sym} ${v} 股，已新增到下方（按儲存才寫入）`;
     }

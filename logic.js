@@ -110,7 +110,25 @@ export function arkBPShareChanged(row) {
   if (row.srcShares === undefined) return true;
   // 清空＝沒改（打錯刪掉不該留 ✓；離開欄位會填回上次股數，v0.54.9）；要清倉請打 0
   if (String(row.shares ?? "").trim() === "") return false;
+  // 上次 0 股（帶入時顯示空白）今天明確打 0 → 算有填（v0.58.1：在價值區但閒錢不夠＝0 股，要跟「沒填」分開）
+  if (String(row.srcShares ?? "").trim() === "" && Number(row.shares) === 0) return true;
   return Number(row.shares || 0) !== Number(row.srcShares || 0);
+}
+
+// 今天沒填股數的價值區列 → 改「非」（v0.58.1，Sin 11/18：沒填＝不在價值區；在價值區但閒錢不夠會明確打 0）
+// 沒填＝帶入列還停在「上次 M/D」（沒改、沒點確認、不是今天更新的），或新列股數空白
+// 價值區：美股 IND、台股 ETF；回傳改成「非」的代號（會直接改 rows 的 cat）
+export function arkBPUnfilledToNon(rows, mkt, date) {
+  const zone = mkt === "US" ? "IND" : "ETF";
+  const changed = [];
+  for (const r of rows || []) {
+    if (!r || !r.symbol || (r.cat || "ETF") !== zone) continue;
+    const unfilled = r.srcShares === undefined
+      ? String(r.shares ?? "").trim() === ""
+      : !(arkBPRowUpdated(r) || r.updatedOn === date);
+    if (unfilled) { r.cat = "NON"; changed.push(String(r.symbol).toUpperCase()); }
+  }
+  return changed;
 }
 
 // 股數有變才算更新；touched 只剩「重複代號合併股數」時明確標記（v0.53.10 起點進欄位不再算）
