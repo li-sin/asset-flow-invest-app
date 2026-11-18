@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.57.13";
+const APP_VERSION = "v0.58.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -51,7 +51,7 @@ const SHEET_HEADERS = {
   arkRank: ["date", "market", "rank", "symbol"],
   // amount：原幣（台股台幣、美股美元），正＝出金；status：out＝確認是出金、dismiss＝Sin 說不是（不再問）
   cashFlow: ["date", "market", "amount", "note", "status", "created_at"],
-  actualTotal: ["date", "market", "total", "note", "created_at"], // total：原幣（台股台幣、美股美元）
+  actualTotal: ["date", "market", "total", "note", "created_at", "kind"], // total：原幣（台股台幣、美股美元）；kind：cash＝只填現金（v0.58.0），空白＝舊的總額
 };
 const SYMBOL_NAMES = {};
 
@@ -112,6 +112,7 @@ const state = {
   arkRecTrendMode: "off",
   // 個別點列切換的代號：off／spark 模式＝展開的那些，all 模式＝被收起來的那些（例外清單）
   arkRecExpanded: new Set(),
+  arkQEMsg: "", // 快速輸入列的提示（v0.58.0）
   arkBPLoading: false,
   arkBPSaving: false,
   arkBPIdleCash: "",
@@ -3368,7 +3369,7 @@ async function ensureSheetTables() {
   await updateSheetValues(SHEET_NAMES.buyingPower, "A1:G1", [SHEET_HEADERS.buyingPower]);
   await updateSheetValues(SHEET_NAMES.arkRank, "A1:D1", [SHEET_HEADERS.arkRank]);
   await updateSheetValues(SHEET_NAMES.cashFlow, "A1:F1", [SHEET_HEADERS.cashFlow]);
-  await updateSheetValues(SHEET_NAMES.actualTotal, "A1:E1", [SHEET_HEADERS.actualTotal]);
+  await updateSheetValues(SHEET_NAMES.actualTotal, "A1:F1", [SHEET_HEADERS.actualTotal]);
 }
 
 async function ensureCloudSheetTables() {
@@ -7725,7 +7726,13 @@ function renderCloudSnapshot() {
       if (!row || !sym) return;
       const mkt = marketForSymbol(sym);
       const j = state.arkBPRows.findIndex((r, k) => k !== i && String(r.symbol || "").toUpperCase().trim() === sym && marketForSymbol(r.symbol) === mkt);
-      if (j < 0) return;
+      if (j < 0) {
+        // 新代號：以前記過就帶上次的分類，不再一律 ETF（v0.58.0）
+        row.cat = arkLastCatFor(sym, mkt);
+        const badge = input.closest(".ark-bp-row")?.querySelector("[data-ark-bp-cat]");
+        if (badge) { badge.className = `ark-bp-cat-badge ar-cat ark-bp-cat-${row.cat.toLowerCase()}`; badge.textContent = { ETF: "ETF", IND: "產業", NON: "非" }[row.cat] || row.cat; }
+        return;
+      }
       const hasShares = String(row.shares ?? "").trim() !== "";
       if (hasShares) { state.arkBPRows[j].shares = row.shares; state.arkBPRows[j].touched = true; }
       state.arkBPRows.splice(i, 1);
@@ -7882,6 +7889,71 @@ function renderCloudSnapshot() {
   // 紀錄頁 ◂▸ 跳上／下一個有紀錄的日子（v0.54.0）
   els.cloudSnapshot.querySelectorAll("[data-ark-rec-go]").forEach((btn) => {
     btn.addEventListener("click", () => { if (btn.dataset.arkRecGo) setArkBPDate(btn.dataset.arkRecGo); });
+  });
+  // 快速輸入列（v0.58.0）：代號 Enter → 股數 Enter → 帶到下方總表（已有＝改那列股數、沒有＝新增一列），游標回代號
+  const qeSym = els.cloudSnapshot.querySelector("#ark-qe-sym");
+  const qeSh = els.cloudSnapshot.querySelector("#ark-qe-sh");
+  const qeHint = els.cloudSnapshot.querySelector("#ark-qe-hint");
+  const qeSay = (msg) => { state.arkQEMsg = msg; if (qeHint) qeHint.textContent = msg; };
+  const qeFind = (sym, mkt) => state.arkBPRows.findIndex((r) => String(r.symbol || "").toUpperCase().trim() === sym && marketForSymbol(r.symbol) === mkt);
+  qeSym?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    e.preventDefault();
+    const mkt = state.arkBPMarket || "TW";
+    const sym = String(qeSym.value || "").toUpperCase().trim();
+    if (!sym) { qeSay("先打代號"); return; }
+    if (marketForSymbol(sym) !== mkt) { qeSay(`${sym} 不是${mkt === "US" ? "美股" : "台股"}代號，請切到另一個市場`); return; }
+    qeSym.value = sym;
+    els.cloudSnapshot.querySelectorAll(".is-qe-hit").forEach((el) => el.classList.remove("is-qe-hit"));
+    const j = qeFind(sym, mkt);
+    if (j >= 0) {
+      els.cloudSnapshot.querySelector(`[data-ark-bp-idx="${j}"]`)?.classList.add("is-qe-hit");
+      const cur = String(state.arkBPRows[j].shares ?? "").trim();
+      qeSay(`${sym} 已在總表${cur ? `，目前 ${cur} 股` : ""}`);
+    } else {
+      const cat = arkLastCatFor(sym, mkt);
+      qeSay(`${sym} 是新標的，分類帶「${{ ETF: "ETF", IND: "產業", NON: "非價值區" }[cat]}」`);
+    }
+    qeSh?.focus();
+    qeSh?.select?.();
+  });
+  qeSh?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    e.preventDefault();
+    const mkt = state.arkBPMarket || "TW";
+    const sym = String(qeSym?.value || "").toUpperCase().trim();
+    if (!sym) { qeSym?.focus(); qeSay("先打代號"); return; }
+    if (marketForSymbol(sym) !== mkt) { qeSym?.focus(); qeSay(`${sym} 不是${mkt === "US" ? "美股" : "台股"}代號`); return; }
+    const v = String(qeSh.value || "").trim();
+    if (v === "" || !(Number(v) >= 0)) { qeSay("先打股數"); return; }
+    let j = qeFind(sym, mkt);
+    let msg;
+    if (j >= 0) {
+      const old = String(state.arkBPRows[j].shares ?? "").trim();
+      state.arkBPRows[j].shares = v;
+      state.arkBPRows[j].touched = true;
+      msg = `${sym} ${old && old !== v ? `${old} → ` : ""}${v} 股，已帶到下方（按儲存才寫入）`;
+    } else {
+      state.arkBPDismissed.delete(sym);
+      state.arkBPRows.push({ symbol: sym, shares: v, cat: arkLastCatFor(sym, mkt), isNew: true, touched: true, _mkt: mkt });
+      j = state.arkBPRows.length - 1;
+      msg = `${sym} ${v} 股，已新增到下方（按儲存才寫入）`;
+    }
+    state.arkBPDirty = true;
+    state.arkQEMsg = msg;
+    renderCloudSnapshot();
+    els.cloudSnapshot.querySelector(`[data-ark-bp-idx="${j}"]`)?.classList.add("is-qe-flash");
+    els.cloudSnapshot.querySelector("#ark-qe-sym")?.focus();
+  });
+  // 展開的趨勢圖：點圖旁邊空白處就收起來（v0.58.0）；點圓點看數值不算
+  els.cloudSnapshot.querySelectorAll("[data-ark-rec-collapse]").forEach((box) => {
+    box.addEventListener("click", (e) => {
+      if (e.target.closest("[data-tooltip], [data-ark-sig-tip], button, input, a")) return;
+      const sym = box.dataset.arkRecCollapse;
+      if (state.arkRecTrendMode === "all") state.arkRecExpanded.add(sym); // 全部展開模式：加進集合＝這支收起
+      else state.arkRecExpanded.delete(sym);
+      renderCloudSnapshot();
+    });
   });
   // 點列的空白處（或 ▾）就展開／收合那支的趨勢圖（v0.54.2，Sin：箭頭太小要點很準）；點到輸入框、按鈕、說明標籤不算
   els.cloudSnapshot.querySelectorAll("[data-ark-rec-sym]").forEach((row) => {

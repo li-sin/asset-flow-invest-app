@@ -4024,6 +4024,16 @@ textarea {
 .ark-rec-expand-norm { font-size: var(--fs-caption); color: var(--muted); }
 .ark-rec-expand .ark-bp-trend-box { border-bottom: 0; }
 .ark-rec-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ark-rec-expand[data-ark-rec-collapse] { cursor: pointer; }
+/* 快速輸入列（v0.58.0） */
+.ark-qe { display: inline-flex; gap: 6px; align-items: center; }
+.ark-qe-input { width: 104px; padding: 6px 8px; border: 1px solid var(--line, rgba(128, 128, 128, 0.35)); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+.ark-qe-input#ark-qe-sh { width: 80px; }
+.ark-qe-input:focus { outline: none; border-color: var(--accent, var(--blue)); }
+.ark-qe-hint { min-height: 1.2em; font-size: var(--fs-caption); color: var(--muted); margin: 2px 0 4px; }
+.ark-rec-row.is-qe-hit { background: rgba(10, 132, 255, 0.14); }
+.ark-rec-row.is-qe-flash { animation: arkQeFlash 1.6s ease-out; }
+@keyframes arkQeFlash { 0% { background: rgba(10, 132, 255, 0.35); } 100% { background: transparent; } }
 .ark-rec-trend-modes { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
 .ark-rec-trend-title { font-size: var(--fs-caption); color: var(--muted); }
 .ark-rec-row[data-ark-rec-sym] { cursor: pointer; }

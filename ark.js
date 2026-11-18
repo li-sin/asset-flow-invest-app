@@ -640,7 +640,7 @@ function arkCashFlowHintHtml(mkt) {
         <button type="button" class="ark-bp-idle-preset" data-ark-cf-no data-amount="${amt}" ${attrs}>不是</button></div>`;
     }
   }
-  return `<div class="ark-bp-derived ark-cf-hint">預估閒錢約 <b>${formatNumber(Math.round(expIdle), 0)}</b> <span class="muted-text">（照上次 ${p.date.slice(5)} 的推算總資產＋股價漲跌＋買賣${flowItems.length ? `，已算進：${escapeHtml(flowItems.map((f) => `${f.label} ${f.amount < 0 ? "+" : "−"}${formatNumber(Math.abs(Math.round(f.amount)), 0)}`).join("、"))}` : ""}）</span>${lvNote}${ask}</div>`;
+  return `<div class="ark-bp-derived ark-cf-hint">預估閒錢約 <b>${mkt === "US" ? `US$${formatNumber(Math.round(expIdle / r.fx), 0)}` : formatNumber(Math.round(expIdle), 0)}</b>${mkt === "US" ? ` <span class="muted-text">（NT$${formatNumber(Math.round(expIdle), 0)}）</span>` : ""} <span class="muted-text">（照上次 ${p.date.slice(5)} 的推算總資產＋股價漲跌＋買賣${flowItems.length ? `，已算進：${escapeHtml(flowItems.map((f) => `${f.label} ${f.amount < 0 ? "+" : "−"}${formatNumber(Math.abs(Math.round(f.amount)), 0)}`).join("、"))}` : ""}）</span>${lvNote}${ask}</div>`;
 }
 // 回測頁出入金（v0.57.9 改版，Sin 11/15：只放最近一個月、其他收起來、版面不要雜亂）
 // 摘要一行 → 待確認（不分日期都顯示）→ 近 30 天（自動帶入＋手動，新到舊）→ 更早（收合）→ 手動新增（收在按鈕後）
@@ -696,27 +696,28 @@ function arkCashFlowListHtml(mkt) {
 // Sin 偶爾填「券商股票＋券商現金＋銀行裡準備投資的錢」（開盤前看到的數字，原幣）→ 跟開盤前推算總資產對照
 async function loadArkActualTotals() {
   try {
-    const rows = await readSheetValues(SHEET_NAMES.actualTotal, "A:E").catch(() => []);
+    const rows = await readSheetValues(SHEET_NAMES.actualTotal, "A:F").catch(() => []);
     state.arkActualTotals = rows.slice(1).filter((r) => r[0] && r[1] && Number(r[2]) > 0).map((r) => ({
       date: normalizeDateText(r[0]), market: normalizeMarketKey(r[1]), total: Number(r[2]), note: String(r[3] || ""), createdAt: String(r[4] || ""),
+      kind: String(r[5] || "") === "cash" ? "cash" : "total", // v0.58.0：cash＝只填現金（券商現金＋銀行投資錢）
     }));
   } catch (e) { console.warn("loadArkActualTotals", e); }
 }
 async function writeArkActualTotals(records) {
   await ensureCloudSheetTables();
-  await clearSheetValues(SHEET_NAMES.actualTotal, "A2:E");
+  await clearSheetValues(SHEET_NAMES.actualTotal, "A2:F");
   if (records.length) {
-    const rows = records.map((r) => [r.date, r.market, r.total, r.note || "", r.createdAt || ""]);
-    await updateSheetValues(SHEET_NAMES.actualTotal, `A2:E${rows.length + 1}`, rows);
+    const rows = records.map((r) => [r.date, r.market, r.total, r.note || "", r.createdAt || "", r.kind === "cash" ? "cash" : ""]);
+    await updateSheetValues(SHEET_NAMES.actualTotal, `A2:F${rows.length + 1}`, rows);
   }
 }
 // 同市場同日期只留一筆；total 空白／0＝刪掉那天
-async function setArkActualTotal(market, date, total) {
+async function setArkActualTotal(market, date, total, kind = "cash") {
   if (state.arkActualSaving || !market || !date) return;
   const prev = state.arkActualTotals || [];
   const kept = prev.filter((r) => !(r.market === market && r.date === date));
   const next = Number(total) > 0
-    ? [...kept, { date, market, total: Number(total), note: "", createdAt: new Date().toISOString() }].sort((a, b) => a.date.localeCompare(b.date) || a.market.localeCompare(b.market))
+    ? [...kept, { date, market, total: Number(total), note: "", createdAt: new Date().toISOString(), kind }].sort((a, b) => a.date.localeCompare(b.date) || a.market.localeCompare(b.market))
     : kept;
   state.arkActualSaving = true;
   state.arkActualTotals = next;
@@ -726,6 +727,18 @@ async function setArkActualTotal(market, date, total) {
   finally { state.arkActualSaving = false; renderCloudSnapshot(); }
 }
 function arkActualFor(mkt, d) { return (state.arkActualTotals || []).find((r) => r.market === mkt && r.date === d) || null; }
+// 某天開盤前的持股市值（原幣，前一份快照×前一交易日收盤；跟推算總資產同一套）
+function arkPreTradeHeldOn(mkt, d) {
+  const row = arkPreTradeRow(mkt, d, 0, targetLevelFromHistory(mkt, d) || 1);
+  return row ? row.held : null;
+}
+// 實際值換成可比較的總資產（v0.58.0）：只填現金＝App 算的持股＋現金，市值用同一個時間點，誤差只剩現金
+function arkActualEffTotal(a) {
+  if (!a) return null;
+  if (a.kind !== "cash") return a.total;
+  const held = arkPreTradeHeldOn(a.market, a.date);
+  return held == null ? null : held + a.total;
+}
 // 某天的開盤前推算總資產（原幣）：前一份快照×前一交易日收盤＋那天記的閒錢（跟回測、偵測同一套）
 function arkPreTradeTotalOn(mkt, d) {
   const rec = state.arkBPRecords.find((r) => r.date === d && marketForSymbol(r.symbol) === mkt);
@@ -740,9 +753,14 @@ function arkActualCompareHtml(mkt) {
   if (!a) return "";
   if (state.arkBTCloses[mkt] !== "done") return `<div class="ark-bp-derived muted-text">實際總額對照：載入收盤價中…</div>`;
   const derived = arkPreTradeTotalOn(mkt, D);
-  const cmp = window.actualVsDerived(a.total, derived);
-  if (!cmp) return `<div class="ark-bp-derived muted-text">已記實際 ${cfMoney(mkt, a.total)}（這天還沒有方舟紀錄，存完紀錄才看得到推算對照）</div>`;
-  return `<div class="ark-bp-derived">推算 ${cfMoney(mkt, derived)}・實際 ${cfMoney(mkt, a.total)} → 推算${cmp.diff >= 0 ? "多" : "少"} <b>${cfMoney(mkt, Math.abs(cmp.diff))}</b>（${(Math.abs(cmp.pct) * 100).toFixed(1)}%）</div>`;
+  const isCash = a.kind === "cash";
+  const cmp = window.actualVsDerived(arkActualEffTotal(a), derived);
+  const what = isCash ? "現金" : "總額（舊格式：股票＋現金）";
+  if (!cmp) return `<div class="ark-bp-derived muted-text">已記實際${what} ${cfMoney(mkt, a.total)}（這天還沒有方舟紀錄，存完紀錄才看得到推算對照）</div>`;
+  const held = isCash ? arkPreTradeHeldOn(mkt, D) : 0;
+  const shown = isCash ? derived - held : derived;
+  const pctBase = isCash ? a.total : arkActualEffTotal(a);
+  return `<div class="ark-bp-derived">推算${isCash ? "現金" : "總額"} ${cfMoney(mkt, shown)}・實際${isCash ? "現金" : "總額"} ${cfMoney(mkt, a.total)} → 推算${cmp.diff >= 0 ? "多" : "少"} <b>${cfMoney(mkt, Math.abs(cmp.diff))}</b>（${(Math.abs(cmp.diff / pctBase) * 100).toFixed(1)}%）${isCash ? `<span class="muted-text">・持股用 App 算的 ${cfMoney(mkt, held)}</span>` : ""}</div>`;
 }
 
 function bindArkCashFlowEvents(root) {
@@ -766,7 +784,7 @@ function bindArkCashFlowEvents(root) {
     const v = Number(String(e.target.value).replace(/,/g, ""));
     const cur = arkActualFor(mkt, D);
     if ((cur?.total || 0) === (v > 0 ? v : 0)) return;
-    setArkActualTotal(mkt, D, v > 0 ? v : 0);
+    setArkActualTotal(mkt, D, v > 0 ? v : 0, "cash");
   });
   root.querySelector("[data-ark-cf-older]")?.addEventListener("click", () => { state.arkCfOlderOpen = !state.arkCfOlderOpen; renderCloudSnapshot(); });
   root.querySelector("[data-ark-cf-addtoggle]")?.addEventListener("click", () => { state.arkCfAddOpen = !state.arkCfAddOpen; renderCloudSnapshot(); });
@@ -801,11 +819,13 @@ function arkBPDerivedTotalHtml(mkt) {
   const total = window.derivedTotalAsset({ held, idleTwd: cash, levelPct: level, fx: rate }) * rate; // 台幣（公式共用 logic.js，v0.57.2）
   held *= rate;
   const snapDate = pos[0]?.date || "";
-  const notes = [`持股 ${formatNumber(held, 0)}`, `水位 ${level}%`];
-  if (mkt === "US") notes.push(`匯率 ${rate.toFixed(2)}，約 US$${formatNumber(total / rate, 0)}`);
+  // 美股：美元在前、台幣放括號，方便對 Firstrade 的美元金額（v0.58.0）
+  const notes = mkt === "US"
+    ? [`持股 US$${formatNumber(held / rate, 0)}`, `水位 ${level}%`, `匯率 ${rate.toFixed(2)}`]
+    : [`持股 ${formatNumber(held, 0)}`, `水位 ${level}%`];
   if (snapDate && snapDate !== today()) notes.push(`快照 ${snapDate.slice(5)}`);
   if (missing) notes.push(`⚠️ ${missing} 支缺報價未計入`);
-  return `<div class="ark-bp-derived">推算總資產 ≈ <b>${formatNumber(total, 0)}</b> <span class="muted-text">（${notes.join("，")}）對照方舟「現在持股＋資金總額」</span></div>`;
+  return `<div class="ark-bp-derived">推算總資產 ≈ <b>${mkt === "US" ? `US$${formatNumber(total / rate, 0)}` : formatNumber(total, 0)}</b>${mkt === "US" ? ` <span class="muted-text">（NT$${formatNumber(total, 0)}）</span>` : ""} <span class="muted-text">（${notes.join("，")}）對照方舟「現在持股＋資金總額」</span></div>`;
 }
 
 // 補記以前的日子（arkBPDate 有值）：只用那天以前（含）的紀錄帶入，那天已有紀錄就帶那天的（v0.53.5）
@@ -833,6 +853,7 @@ function arkBPPrefillFromLast() {
 
 // 切換方舟紀錄頁市場（v0.57.4）：閒錢欄跟著換成該市場自己的值（沒存的輸入先暫存，切回來還在）
 function switchArkBPMarket(mkt) {
+  state.arkQEMsg = "";
   const from = state.arkBPMarket || "TW";
   state.arkBPIdleByMkt[from] = { idle: state.arkBPIdleCash, calc: state.arkBPCalcCash };
   state.arkBPMarket = mkt;
@@ -1165,7 +1186,9 @@ function arkBTMergedTableHtml(results, start, cur, mkt) {
     return `<table class="ark-bt-table"><thead><tr><th>各戰法（收盤後）</th><th>總值</th><th>從起點</th><th>持股數</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
   // 實際帳戶總額（v0.57.12）：比較點那天有填 → 「你（實際）」放第一列、跟你比改用實際值；沒填就附最近一次的對照
-  const act = arkActualFor(mkt, L.date);
+  const actRec = arkActualFor(mkt, L.date);
+  const actEff = arkActualEffTotal(actRec);
+  const act = actEff == null ? null : { total: actEff, kind: actRec.kind };
   const you = act ? act.total : L.total;
   const diff = (v) => { const d = Math.round(v - you); return `${d >= 0 ? "+" : "−"}${formatNumber(Math.abs(d), 0)}`; };
   const strat = results.map(({ label, color, r }) => {
@@ -1180,12 +1203,12 @@ function arkBTMergedTableHtml(results, start, cur, mkt) {
         ? `<tr class="is-you"><td>你（實際，${L.date.slice(5).replace("-", "/")} 填）</td><td>${cur}${formatNumber(act.total, 0)}</td><td class="${act.total >= base ? "is-pos" : "is-neg"}">${pct(act.total / base - 1)}</td><td class="ark-bt-diff">—</td><td>${L.m.size}</td></tr><tr class="is-you-derived"><td>你（推算）</td><td>${cur}${formatNumber(L.total, 0)}</td><td class="${L.total >= base ? "is-pos" : "is-neg"}">${pct(L.total / base - 1)}</td><td class="ark-bt-diff">${diff(L.total)}</td><td></td></tr>`
         : `<tr class="is-you"><td>你（推算總資產）</td><td>${cur}${formatNumber(you, 0)}</td><td class="${you >= base ? "is-pos" : "is-neg"}">${pct(you / base - 1)}</td><td class="ark-bt-diff">—</td><td>${L.m.size}</td></tr>`}${strat}</tbody>
     </table>
-    <p class="muted-text ark-bt-note">你＝${act ? "那天填的實際帳戶總額（推算列是記的閒錢推算）" : `${L.date.slice(5).replace("-", "/")} 記的閒錢推算`}；戰法＝前一個紀錄日收盤後（收盤後的數字點曲線最後一天看）</p>${(() => {
+    <p class="muted-text ark-bt-note">你＝${act ? (act.kind === "cash" ? "App 算的持股＋那天填的實際現金（推算列是記的閒錢推算）" : "那天填的實際帳戶總額（推算列是記的閒錢推算）") : `${L.date.slice(5).replace("-", "/")} 記的閒錢推算`}；戰法＝前一個紀錄日收盤後（收盤後的數字點曲線最後一天看）</p>${(() => {
       if (act) return "";
       const lastAct = (state.arkActualTotals || []).filter((r) => r.market === mkt && r.date < L.date).pop();
       if (!lastAct) return "";
-      const cmp = window.actualVsDerived(lastAct.total, arkPreTradeTotalOn(mkt, lastAct.date));
-      return cmp ? `<p class="muted-text ark-bt-note">最近一次實際總額：${lastAct.date.slice(5).replace("-", "/")} ${cur}${formatNumber(lastAct.total, 0)}（當天推算${cmp.diff >= 0 ? "多" : "少"} ${cur}${formatNumber(Math.abs(cmp.diff), 0)}）</p>` : "";
+      const cmp = window.actualVsDerived(arkActualEffTotal(lastAct), arkPreTradeTotalOn(mkt, lastAct.date));
+      return cmp ? `<p class="muted-text ark-bt-note">最近一次實際${lastAct.kind === "cash" ? "現金" : "總額"}：${lastAct.date.slice(5).replace("-", "/")} ${cur}${formatNumber(lastAct.total, 0)}（當天推算${cmp.diff >= 0 ? "多" : "少"} ${cur}${formatNumber(Math.abs(cmp.diff), 0)}）</p>` : "";
     })()}`;
 }
 
@@ -1385,6 +1408,7 @@ function arkRemindHtml() {
 
 // 補記以前的日子：換日期就重新帶入那天以前（含）最近的紀錄與位階（v0.53.5；v0.56.0 移到外層給首頁提醒共用）
 function setArkBPDate(d) {
+  state.arkQEMsg = "";
   const discard = state.arkBPDirty;
   if (discard && !confirm("這天有修改還沒儲存，確定要換日期？（修改會不見）")) { renderCloudSnapshot(); return; }
   state.arkBPDate = d && d < today() ? d : "";
@@ -1394,6 +1418,12 @@ function setArkBPDate(d) {
   arkBPPrefillFromLast();
   arkRankPrefill();
   renderCloudSnapshot();
+}
+
+// 這支以前記過的最後一次分類；沒記過照預設（台股 ETF、美股產業）（v0.58.0）
+function arkLastCatFor(sym, mkt) {
+  const last = state.arkBPRecords.filter((r) => r.symbol === sym && r.cat).sort((a, b) => a.date.localeCompare(b.date)).pop();
+  return last ? last.cat : (mkt === "US" ? "IND" : "ETF");
 }
 
 function renderArkBPRecordTab(positions) {
@@ -1477,7 +1507,7 @@ function renderArkBPRecordTab(positions) {
     let expandHtml = "";
     if (isExp) {
       const symRecords = mRecords.filter((x) => x.symbol === r.symbol).sort((a, b) => a.date.localeCompare(b.date));
-      expandHtml = `<div class="ark-rec-expand"><div class="ark-rec-expand-norm">標準化 <b>${norm == null ? "—" : formatArkNorm(norm)}</b>${prevNote}</div>${renderArkBPSymbolTrend(symRecords, curDate)}</div>`;
+      expandHtml = `<div class="ark-rec-expand" data-ark-rec-collapse="${escapeHtml(r.symbol)}" title="點空白處收起"><div class="ark-rec-expand-norm">標準化 <b>${norm == null ? "—" : formatArkNorm(norm)}</b>${prevNote}</div>${renderArkBPSymbolTrend(symRecords, curDate)}</div>`;
     }
     let groupHeader = "";
     if (cat !== lastCatGroup) {
@@ -1532,14 +1562,18 @@ function renderArkBPRecordTab(positions) {
       <div id="ark-bp-derived-slot">${arkBPDerivedTotalHtml(mkt)}</div>
       <div id="ark-bp-cf-slot">${arkCashFlowHintHtml(mkt)}</div>
       <div class="ark-bp-idle-row">
-        <label>實際總額</label>
-        <input class="ark-bp-idle-input" type="number" inputmode="decimal" id="ark-bp-actual" value="${escapeHtml(String(arkActualFor(mkt, state.arkBPDate || today())?.total || ""))}" placeholder="${mkt === "US" ? "美元" : "台幣"}：股票＋券商現金＋銀行投資錢（選填）" title="開盤前看到的總額，離開欄位就存">
+        <label>實際現金</label>
+        <input class="ark-bp-idle-input" type="number" inputmode="decimal" id="ark-bp-actual" value="${escapeHtml(String((() => { const a = arkActualFor(mkt, state.arkBPDate || today()); return a && a.kind === "cash" ? a.total : ""; })()))}" placeholder="${mkt === "US" ? "美元" : "台幣"}：券商現金＋銀行投資錢（選填）" title="開盤前（當天還沒買賣）的現金，離開欄位就存">
       </div>
       <div id="ark-bp-actual-slot">${arkActualCompareHtml(mkt)}</div>
       ${mkt === "US" ? arkRankPickerHtml(positions, curDate) : ""}
       ${dupCount ? `<p class="ark-bp-warn-note">⚠️ ${dupCount} 支同一天記了兩次以上：按其中一列的 − 移除多的再儲存</p>` : ""}
       ${usNotes}
       <div class="ark-rec-tools">
+        <span class="ark-qe" title="快速輸入：代號 Enter → 股數 Enter，帶到下方總表（按儲存才寫入）">
+          <input class="ark-qe-input" type="text" id="ark-qe-sym" placeholder="快速輸入代號" autocomplete="off" autocapitalize="characters" enterkeyhint="next">
+          <input class="ark-qe-input" type="number" id="ark-qe-sh" ${mkt === "US" ? 'inputmode="decimal" step="any"' : 'inputmode="numeric"'} placeholder="股數" enterkeyhint="done">
+        </span>
         <button class="button ghost ark-bp-add-top" type="button" id="ark-bp-add-blank">＋ 空白列</button>
         <span class="ark-rec-trend-modes" role="group" aria-label="趨勢圖">
           <span class="ark-rec-trend-title">趨勢圖</span>
@@ -1548,6 +1582,7 @@ function renderArkBPRecordTab(positions) {
           <button class="holdings-subtab${trendMode === "off" ? " is-active" : ""}" type="button" data-ark-rec-mode="off">全部收合</button>
         </span>
       </div>
+      <div class="ark-qe-hint" id="ark-qe-hint">${escapeHtml(state.arkQEMsg || "")}</div>
       <div class="ark-rec-header">
         <span class="ar-rm"></span><span class="ar-sym">標的</span>${isSpark ? '<span class="ar-spark" title="虛線＝中位數、橘點＝股數偏高（超過中位數×1.5）、藍點＝選的這天；點圓點看數值">趨勢 ⓘ</span>' : ""}<span class="ar-sh">股數</span><span class="ar-st"></span><span class="ar-cat">分類</span><span class="ar-norm">標準化</span><span class="ar-sig"></span><span class="ar-exp"></span>
       </div>
