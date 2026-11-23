@@ -4030,6 +4030,13 @@ textarea {
 .ark-qe-input { width: 104px; padding: 6px 8px; border: 1px solid var(--line, rgba(128, 128, 128, 0.35)); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
 .ark-qe-input#ark-qe-sh { width: 80px; }
 .ark-qe-input:focus { outline: none; border-color: var(--accent, var(--blue)); }
+.ark-qe-sym-wrap { position: relative; display: inline-block; }
+.ark-qe-dropdown { display: none; position: absolute; top: 100%; left: 0; z-index: 100; min-width: 160px; max-height: 220px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); margin-top: 2px; }
+.ark-qe-dd-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; cursor: pointer; font-size: inherit; }
+.ark-qe-dd-item:hover, .ark-qe-dd-item.is-active { background: var(--hover-bg); }
+.ark-qe-dd-sym { font-weight: 600; }
+.ark-qe-dd-tag { font-size: var(--fs-caption); color: var(--muted); margin-left: 8px; white-space: nowrap; }
+.ark-qe-dd-item.is-hist .ark-qe-dd-tag { color: var(--amber); }
 .ark-qe-hint { min-height: 1.2em; font-size: var(--fs-caption); color: var(--muted); margin: 2px 0 4px; }
 .ark-rec-row.is-qe-hit { background: rgba(10, 132, 255, 0.14); }
 .ark-rec-row.is-qe-flash { animation: arkQeFlash 1.6s ease-out; }

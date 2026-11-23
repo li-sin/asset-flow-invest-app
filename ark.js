@@ -1579,7 +1579,10 @@ function renderArkBPRecordTab(positions) {
       ${usNotes}
       <div class="ark-rec-tools">
         <span class="ark-qe" title="快速輸入：代號 Enter → 股數 Enter，帶到下方總表（按儲存才寫入）">
-          <input class="ark-qe-input" type="text" id="ark-qe-sym" placeholder="快速輸入代號" autocomplete="off" autocapitalize="characters" enterkeyhint="next">
+          <span class="ark-qe-sym-wrap">
+            <input class="ark-qe-input" type="text" id="ark-qe-sym" placeholder="快速輸入代號" autocomplete="off" autocapitalize="characters" enterkeyhint="next">
+            <div class="ark-qe-dropdown" id="ark-qe-dropdown"></div>
+          </span>
           <input class="ark-qe-input" type="number" id="ark-qe-sh" ${mkt === "US" ? 'inputmode="decimal" step="any"' : 'inputmode="numeric"'} placeholder="股數" enterkeyhint="done">
         </span>
         <button class="button ghost ark-bp-add-top" type="button" id="ark-bp-add-blank">＋ 空白列</button>

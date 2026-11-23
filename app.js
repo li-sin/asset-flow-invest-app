@@ -2,7 +2,7 @@
 const DB_NAME = "assetflow_invest_screenshots";
 const DB_VERSION = 1;
 const STORE = "entries";
-const APP_VERSION = "v0.58.1";
+const APP_VERSION = "v0.59.0";
 const APP_VERSION_NOTE = "方舟代號自動轉大寫＋美股預設分類為產業";
 document.getElementById("main-css").href = `./styles.css?v=${APP_VERSION}`;
 const TARGET_LEVEL_STORAGE_KEY = "assetflow_invest_target_levels_v1";
@@ -7891,19 +7891,22 @@ function renderCloudSnapshot() {
     btn.addEventListener("click", () => { if (btn.dataset.arkRecGo) setArkBPDate(btn.dataset.arkRecGo); });
   });
   // 快速輸入列（v0.58.0）：代號 Enter → 股數 Enter → 帶到下方總表（已有＝改那列股數、沒有＝新增一列），游標回代號
+  // 自動篩選下拉選單（v0.59.0）：邊打邊從歷史＋總表代號篩選，點選或 ↑↓Enter 選中
   const qeSym = els.cloudSnapshot.querySelector("#ark-qe-sym");
   const qeSh = els.cloudSnapshot.querySelector("#ark-qe-sh");
   const qeHint = els.cloudSnapshot.querySelector("#ark-qe-hint");
+  const qeDD = els.cloudSnapshot.querySelector("#ark-qe-dropdown");
+  let qeDDIdx = -1;
   const qeSay = (msg) => { state.arkQEMsg = msg; if (qeHint) qeHint.textContent = msg; };
   const qeFind = (sym, mkt) => state.arkBPRows.findIndex((r) => String(r.symbol || "").toUpperCase().trim() === sym && marketForSymbol(r.symbol) === mkt);
-  qeSym?.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || e.isComposing) return;
-    e.preventDefault();
+
+  function qeConfirmSym() {
     const mkt = state.arkBPMarket || "TW";
     const sym = String(qeSym.value || "").toUpperCase().trim();
     if (!sym) { qeSay("先打代號"); return; }
     if (marketForSymbol(sym) !== mkt) { qeSay(`${sym} 不是${mkt === "US" ? "美股" : "台股"}代號，請切到另一個市場`); return; }
     qeSym.value = sym;
+    qeCloseDD();
     els.cloudSnapshot.querySelectorAll(".is-qe-hit").forEach((el) => el.classList.remove("is-qe-hit"));
     const j = qeFind(sym, mkt);
     if (j >= 0) {
@@ -7915,6 +7918,70 @@ function renderCloudSnapshot() {
     }
     qeSh?.focus();
     qeSh?.select?.();
+  }
+
+  function qeCandidates(query) {
+    const mkt = state.arkBPMarket || "TW";
+    const q = query.toUpperCase().trim();
+    const symSet = new Set();
+    for (const r of state.arkBPRecords) { if (marketForSymbol(r.symbol) === mkt) symSet.add(String(r.symbol).toUpperCase().trim()); }
+    for (const r of state.arkBPRows) { if (r.symbol && marketForSymbol(r.symbol) === mkt) symSet.add(String(r.symbol).toUpperCase().trim()); }
+    const inTable = new Set(state.arkBPRows.filter((r) => r.symbol).map((r) => String(r.symbol).toUpperCase().trim()));
+    const all = [...symSet].filter((s) => s && (!q || s.includes(q)));
+    const starts = all.filter((s) => s.startsWith(q));
+    const rest = all.filter((s) => !s.startsWith(q));
+    const cmp = (a, b) => (inTable.has(a) ? 0 : 1) - (inTable.has(b) ? 0 : 1) || a.localeCompare(b);
+    starts.sort(cmp);
+    rest.sort(cmp);
+    return [...starts, ...rest].map((sym) => {
+      const row = state.arkBPRows.find((r) => String(r.symbol || "").toUpperCase().trim() === sym);
+      return { sym, inTable: inTable.has(sym), shares: row ? String(row.shares ?? "").trim() : "" };
+    });
+  }
+
+  function qeShowDD(query) {
+    if (!qeDD) return;
+    const list = qeCandidates(query);
+    if (!list.length || !query.trim()) { qeCloseDD(); return; }
+    qeDDIdx = -1;
+    qeDD.innerHTML = list.slice(0, 15).map((c, i) => {
+      const tag = c.inTable ? (c.shares ? `${c.shares} 股` : "在總表") : "歷史";
+      return `<div class="ark-qe-dd-item${c.inTable ? "" : " is-hist"}" data-qe-i="${i}" data-qe-sym="${c.sym}"><span class="ark-qe-dd-sym">${c.sym}</span><span class="ark-qe-dd-tag">${tag}</span></div>`;
+    }).join("");
+    qeDD.style.display = "block";
+  }
+
+  function qeCloseDD() { if (qeDD) { qeDD.innerHTML = ""; qeDD.style.display = "none"; } qeDDIdx = -1; }
+
+  function qeHighlight(idx) {
+    if (!qeDD) return;
+    qeDD.querySelectorAll(".ark-qe-dd-item").forEach((el, i) => el.classList.toggle("is-active", i === idx));
+    qeDDIdx = idx;
+    qeDD.querySelector(".is-active")?.scrollIntoView({ block: "nearest" });
+  }
+
+  qeSym?.addEventListener("input", () => { qeShowDD(qeSym.value); });
+  qeSym?.addEventListener("focus", () => { if (qeSym.value.trim()) qeShowDD(qeSym.value); });
+  qeSym?.addEventListener("blur", () => { setTimeout(qeCloseDD, 200); });
+  qeDD?.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const item = e.target.closest("[data-qe-sym]");
+    if (!item) return;
+    qeSym.value = item.dataset.qeSym;
+    qeConfirmSym();
+  });
+
+  qeSym?.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    const items = qeDD ? qeDD.querySelectorAll(".ark-qe-dd-item") : [];
+    const open = qeDD && qeDD.style.display === "block" && items.length;
+    if (open && e.key === "ArrowDown") { e.preventDefault(); qeHighlight(Math.min(qeDDIdx + 1, items.length - 1)); return; }
+    if (open && e.key === "ArrowUp") { e.preventDefault(); qeHighlight(Math.max(qeDDIdx - 1, 0)); return; }
+    if (e.key === "Escape") { qeCloseDD(); return; }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (open && qeDDIdx >= 0 && items[qeDDIdx]) { qeSym.value = items[qeDDIdx].dataset.qeSym; }
+    qeConfirmSym();
   });
   qeSh?.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" || e.isComposing) return;
