@@ -893,14 +893,20 @@ async function saveArkBPRecords() {
   if (saveDate !== today() && state.arkBPRecords.some((r) => r.date === saveDate && marketForSymbol(r.symbol) === mkt)
     && !confirm(`${saveDate} 已有${mkt === "TW" ? "台股" : "美股"}紀錄，確定要用現在的內容覆蓋？`)) return;
   if (etfCount > 10 && !confirm(`ETF 價值區有 ${etfCount} 檔（超過 10 檔），確定要這樣儲存？`)) return;
+  // 標準化一律用試算閒錢（空＝同閒錢），每筆都寫進 G 欄（v0.53.1）
+  const calc = Number(state.arkBPCalcCash) > 0 ? Number(state.arkBPCalcCash) : cash;
+  // 防呆（v0.59.1）：試算閒錢從 100 萬變非 100 萬或差 ≥2 倍 → 儲存前確認，避免忘了按「100萬」
+  const calcWarn = window.arkBPCalcCashMismatch?.(state.arkBPRecords, mkt, saveDate, calc);
+  if (calcWarn) {
+    const prevMD = `${Number(calcWarn.prevDate.slice(5, 7))}/${Number(calcWarn.prevDate.slice(8))}`;
+    if (!confirm(`試算閒錢這次是 ${calcWarn.calc.toLocaleString()}（上次 ${prevMD} 是 ${calcWarn.prevCalc.toLocaleString()}），確定不是忘了按「100萬」？`)) return;
+  }
   state.arkBPSaving = true;
   renderCloudSnapshot();
   let toNonPrevCat = [];
   try {
     const date = state.arkBPDate || today();
     const kept = state.arkBPRecords.filter((r) => !(r.date === date && marketForSymbol(r.symbol) === mkt));
-    // 標準化一律用試算閒錢（空＝同閒錢），每筆都寫進 G 欄（v0.53.1）
-    const calc = Number(state.arkBPCalcCash) > 0 ? Number(state.arkBPCalcCash) : cash;
     toNonPrevCat = toNon.map((r) => [r, r.cat]);
     const nonSyms = window.arkBPUnfilledToNon(toNon, mkt, date); // 確定要存了才真的改 rows 的分類
     const newEntries = validRows.map((r) => ({ date, idleCash: cash, calcCash: calc, symbol: r.symbol.toUpperCase(), shares: Number(r.shares), cat: r.cat || "ETF",

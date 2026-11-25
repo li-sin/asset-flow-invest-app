@@ -144,6 +144,33 @@ export function arkBPRowStatus(row, todayStr) {
   return { stale: true, label: m && d ? `上次 ${Number(m)}/${Number(d)}` : "上次" };
 }
 
+// 儲存前防呆（v0.59.1）：檢查這次試算閒錢是否與同市場上一筆（日期早於 saveDate）異常偏離
+// 觸發條件：上次是 100 萬而這次不是、這次 ≤ 0，或兩者相差 ≥ 2 倍（避免改用實際閒錢小幅波動時天天跳）
+// 回傳 null（無異常）或 { prevDate, prevCalc, calc }
+export function arkBPCalcCashMismatch(records, mkt, saveDate, calcCash) {
+  const calc = Number(calcCash);
+  if (!Number.isFinite(calc)) return null;
+  const targetMkt = normalizeMarketKey(mkt);
+  let prevDate = "";
+  let prevCalc = 0;
+  for (const r of records || []) {
+    if (!r || !r.symbol || !r.date) continue;
+    if ((classifySymbolMarket(r.symbol) || "TW") !== targetMkt) continue;
+    if (saveDate && r.date >= saveDate) continue;
+    const pc = Number(r.calcCash) > 0 ? Number(r.calcCash) : Number(r.idleCash);
+    if (!Number.isFinite(pc) || pc <= 0) continue;
+    if (r.date > prevDate) {
+      prevDate = r.date;
+      prevCalc = pc;
+    }
+  }
+  if (!prevDate || prevCalc <= 0 || calc === prevCalc) return null;
+  if (calc <= 0) return { prevDate, prevCalc, calc };
+  const from100w = prevCalc === 1000000 && calc !== 1000000;
+  const bigJump = calc / prevCalc >= 2 || prevCalc / calc >= 2;
+  return from100w || bigJump ? { prevDate, prevCalc, calc } : null;
+}
+
 // === 方舟回填：新加入標的（v0.49.2）===
 // 「新加入」＝該市場在 date 當天（或之前最近）那份快照有持股、但前一份同市場快照沒有（或 0 股）。
 // 刻意不用「從未回填過」判定：清倉後買回很常見，方舟那邊需要重新輸入代號。
